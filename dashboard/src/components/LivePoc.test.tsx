@@ -221,4 +221,114 @@ describe("LivePoc", () => {
       screen.getByText(/No live session is running right now\./),
     ).toBeInTheDocument();
   });
+
+  it("labels a paper session as synthetic and never shows the live banner", async () => {
+    render(<LivePoc url="ws://test/api/live/ws" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const socket = lastSocket();
+    socket.open();
+    socket.message(SNAPSHOT_FRAME);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+
+    expect(screen.getByText(/Paper trading on a synthetic workload/)).toBeInTheDocument();
+    expect(screen.queryByText(/Live Trading: real capital/)).toBeNull();
+  });
+
+  it("raises the live-capital banner when a live execution record streams in", async () => {
+    render(<LivePoc url="ws://test/api/live/ws" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const socket = lastSocket();
+    socket.open();
+    socket.message({
+      ...SNAPSHOT_FRAME,
+      items: [
+        {
+          ...SNAPSHOT_FRAME.items[0],
+          seq: 75,
+          executionMode: "live",
+          settlementStatus: "settled",
+          venueOrderIds: ["kalshi-1", "poly-0xabc"],
+        },
+      ],
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+
+    expect(screen.getByText(/Live Trading: real capital, not synthetic/)).toBeInTheDocument();
+    expect(screen.queryByText(/Paper trading on a synthetic workload/)).toBeNull();
+  });
+
+  it("renders open and unwound settlements explicitly instead of $0.00", async () => {
+    render(<LivePoc url="ws://test/api/live/ws" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const socket = lastSocket();
+    socket.open();
+    socket.message({
+      ...SNAPSHOT_FRAME,
+      items: [
+        {
+          ...SNAPSHOT_FRAME.items[0],
+          seq: 74,
+          executionMode: "live",
+          settlementStatus: "unwound",
+          realizedProfitCents: null,
+        },
+        {
+          ...SNAPSHOT_FRAME.items[0],
+          seq: 75,
+          executionMode: "live",
+          settlementStatus: "open",
+          realizedProfitCents: null,
+        },
+      ],
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+
+    expect(screen.getByText("Open")).toBeInTheDocument();
+    expect(screen.getByText("Unwound")).toBeInTheDocument();
+    expect(screen.queryByText("$0.00", { selector: "td" })).toBeNull();
+    // An unsettled trade is not a loss; only known non-positive outcomes are.
+    expect(document.querySelectorAll("tr.is-loss")).toHaveLength(0);
+  });
+
+  it("switches the session pill to stale when the runner goes silent", async () => {
+    render(<LivePoc url="ws://test/api/live/ws" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const socket = lastSocket();
+    socket.open();
+    socket.message(SNAPSHOT_FRAME);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    expect(screen.getByText("Session live")).toBeInTheDocument();
+
+    socket.message({
+      t: "totals",
+      status: "stale",
+      totals: SNAPSHOT_FRAME.totals,
+      funnel: SNAPSHOT_FRAME.funnel,
+      capital: SNAPSHOT_FRAME.capital,
+      windowsCompleted: SNAPSHOT_FRAME.windowsCompleted,
+      seqCursor: SNAPSHOT_FRAME.seqCursor,
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+
+    expect(screen.getByText("Runner silent — session stale")).toBeInTheDocument();
+    expect(screen.queryByText("Session live")).toBeNull();
+  });
 });

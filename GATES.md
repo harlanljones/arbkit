@@ -58,3 +58,26 @@
   - CHECK: `cargo test -p arbkit-exec --all-features private_fill`
   - EXPECT: `test result: ok`
   - EVIDENCE: Kalshi and Polymarket private fill parser tests plus durable ledger round-trip passed.
+
+## HJ-63 protected dashboard live ingest gates
+
+- [x] HJ63-G1: Ingest is token-gated before any request reaches the Durable Object.
+  - CHECK: `npm --prefix dashboard test -- --run worker/index.test.ts`
+  - EXPECT: `Tests passed` across the credential matrix
+  - EVIDENCE: correct bearer forwards to the room; missing/garbled/mis-schemed credentials all answer 401 with zero room calls; unconfigured token answers 503; method gate answers 405 first.
+- [x] HJ63-G2: At-least-once ingest retries and resume replays are idempotent.
+  - CHECK: `npm --prefix dashboard test -- --run worker/position-room.test.ts src/data/liveSession.test.ts`
+  - EXPECT: `Tests passed`
+  - EVIDENCE: a replayed whole batch leaves totals/ring unchanged server-side; the viewer handshake serves resume slices strictly above `afterSeq`; reducer drops rows at or below its cursor.
+- [x] HJ63-G3: Session restart resets authoritative state and fans it out.
+  - CHECK: `npm --prefix dashboard test -- --run worker/state.test.ts`
+  - EXPECT: `Tests passed`
+  - EVIDENCE: new session-start zeroes totals/cursor/ring and snapshots under the new runId; ended sessions reject further frames with 409 until a session-start.
+- [x] HJ63-G4: Live vs paper labeling and open/unwound settlement rendering are honest.
+  - CHECK: `npm --prefix dashboard test -- --run src/components/LivePoc.test.tsx`
+  - EXPECT: `Tests passed`
+  - EVIDENCE: paper sessions show the synthetic-workload note only; a live record raises "Live Trading: real capital, not synthetic"; open/unwound settlements render as status text instead of fabricated $0.00 and are not styled as losses.
+- [x] HJ63-G5: Staleness flips exactly once via alarm and recovers on runner return; operational stats surface on every push.
+  - CHECK: `npm --prefix dashboard test -- --run && npm --prefix dashboard run typecheck:worker && npm --prefix dashboard run build`
+  - EXPECT: `Tests 9 files / 75 passed`; typecheck and build clean
+  - EVIDENCE: alarm lifecycle (arm, keep-earlier, stale-once, die-out, re-arm on resume) plus stats-frame surfacing of cursor/windows/capital/funnel all pinned; full suite, worker typecheck, and production build pass.

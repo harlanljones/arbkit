@@ -256,6 +256,29 @@ describe("wire validation", () => {
     ).toBe(false);
   });
 
+  it("accepts the live-execution extensions and rejects unknown settlements", () => {
+    // LIVE_TRADING.md's optional fields ride on an otherwise paper record;
+    // a nullable realizedProfitCents is what makes "open" expressible.
+    const live = record(0, {
+      executionMode: "live",
+      venueOrderIds: ["kalshi-1", "poly-0xabc"],
+      filledStakeCents: 95_389,
+      settlementStatus: "open",
+      realizedProfitCents: null,
+    });
+    expect(runnerFrameSchema.safeParse({ t: "positions", items: [live] }).success).toBe(true);
+
+    for (const settlementStatus of ["promised", "OPEN", null]) {
+      expect(
+        runnerFrameSchema.safeParse({
+          t: "positions",
+          items: [record(1, { settlementStatus })],
+        }).success,
+        `settlementStatus ${String(settlementStatus)} must be rejected`,
+      ).toBe(false);
+    }
+  });
+
   it("accepts the exact frames the Rust runner emits", () => {
     // Byte-for-byte shapes observed from a live_runner smoke session.
     expect(

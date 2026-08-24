@@ -122,6 +122,21 @@ export function LivePoc({ url }: { url?: string }) {
   );
 }
 
+/** An unsettled live trade has no realized profit yet: rendering `$0.00`
+ * would fabricate a settlement that never happened, so the wire's
+ * `settlementStatus` is shown instead and the row is not styled as a loss. */
+function renderRealized(record: TradeRecord): string {
+  if (record.realizedProfitCents !== null) return money(record.realizedProfitCents);
+  if (record.settlementStatus === "open") return "Open";
+  if (record.settlementStatus === "unwound") return "Unwound";
+  return "—";
+}
+
+function realizedRowDisposition(record: TradeRecord): string | undefined {
+  if (record.realizedProfitCents === null) return undefined;
+  return record.realizedProfitCents > 0 ? undefined : "is-loss";
+}
+
 function formatLastFrame(timestamp: number | null): string {
   if (timestamp === null) return "No frame received";
   const ageMs = Math.max(0, Date.now() - timestamp);
@@ -305,13 +320,16 @@ function RecentTable({
           </thead>
           <tbody>
             {rows.map((record) => (
-              <tr key={record.seq} className={(record.realizedProfitCents ?? 0) > 0 ? undefined : "is-loss"}>
+              <tr
+                key={record.seq}
+                className={realizedRowDisposition(record)}
+              >
                 <th scope="row">{record.seq}</th>
                 <td>{record.marketLabel}</td>
                 <td>{record.edgeBps} bps</td>
                 <td>{money(record.requestedStakeCents)}</td>
                 <td>{money(record.worstCaseProfitCents)}</td>
-                <td>{money(record.realizedProfitCents ?? 0)}</td>
+                <td>{renderRealized(record)}</td>
                 <td>
                   <span
                     className={`trade-badge trade-badge--${record.classification}`}
