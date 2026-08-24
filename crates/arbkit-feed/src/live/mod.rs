@@ -1,6 +1,6 @@
 //! Live WebSocket feed connectors (I/O boundary).
 //!
-//! Tokio runs here only. Parsed [`FeedEvent`] values cross into the engine via
+//! Tokio runs here only. Parsed [`crate::FeedEvent`] values cross into the engine via
 //! [`FeedEventSender`]; the hot loop never awaits.
 
 #[cfg(feature = "live")]

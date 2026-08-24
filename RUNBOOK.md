@@ -32,19 +32,21 @@ echo "ARBKIT_KILL_SWITCH=${ARBKIT_KILL_SWITCH:-<unset>}"        # unset == engag
 ```bash
 cargo run -p arbkit-exec --features runner --example prod_trader --release -- \
     --mode=dry-run \
-    --kalshi-markets-url='https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXMLBGAME&status=open' \
-    --poly-events-url='https://gamma-api.polymarket.com/events?tag_slug=mlb&closed=false' \
+    --kalshi-markets-url='https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXMLBGAME' \
+    --poly-events-url='https://gamma-api.polymarket.com/events?tag_slug=mlb' \
     [--url=http://127.0.0.1:8787/api/live/ingest] [--token-env=LIVE_INGEST_TOKEN] \
     [--state=prod-risk-state.json] [--journal=prod-session.ndjson] \
     [--window-ms=250] [--windows=<n>]
 ```
 
-> Flags are `--name=value` exactly; the arg parser does not accept a space
-> between the flag and its value.
-
 - Discovery runs once at boot; an empty catalog **refuses to run**. Scope the
-  discovery URLs (as above); unscoped defaults page through every open market
-  on both venues and are noise.
+  discovery URLs (as above) — the runner appends its own `status=open` /
+  `closed=false&limit…` filters, so a pinned URL must carry only the series
+  or tag; duplicating a filter 400s at the venue. Unscoped defaults page
+  through every open market on both venues and are noise.
+- Flags parse only in `--flag=value` form; a space-separated value is
+  silently ignored and the default applies instead (rehearsal finding,
+  2026-08-24).
 - Without `--windows`, the session runs until `session-end` arrives through
   the command queue (§3) or the process is killed.
 - Boot line prints mode + full risk posture; the first `risk` frame is the
