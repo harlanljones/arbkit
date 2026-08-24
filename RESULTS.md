@@ -302,6 +302,61 @@ as a dated finding rather than absorbed into a wider tolerance.
 
 ---
 
+## 9. Operator runbook rehearsal — dry-run (August 24, 2026)
+
+HJ-153: every `RUNBOOK.md` path was rehearsed against the real builds on the
+reference Linux host (i7-14700K, rustc 1.97.1, commit `dd045ff` + working-tree
+docs). **No order was transmitted and no credentials existed** — dry-run only;
+micro-live paths are rehearsed in writing, executed never (HJ-152 gates them).
+
+| Runbook path | Result | Evidence |
+|---|---|---|
+| Posture check / resting state | PASS | no `.env`; switch unset ⇒ engaged |
+| Live-mode refusal | PASS | `--mode=live` with switch engaged → exit 3 before credential load |
+| Scoped discovery → session start | PASS | 42 active pairs from 84 Kalshi markets + 20 Poly events; 53 unmatched + 285 malformed skipped by design |
+| Unscoped default boot | SAFE REFUSAL | 0 pairs from 1,105 malformed; runner refused to run — operator error caught by the catalog gate |
+| Bounded session stop | PASS | `--windows=12`: warmup ledger `unwind_failures=0`, clean `session ended`, journal + state written |
+| Restart recovery with env drift | PASS | env said `stake<=999999c`; stored policy won (`stake<=5000c (env 999999)`), drift printed, never applied |
+| Worker command schema double-gate | PASS | bare disarm POST → `400 "command failed schema validation"` |
+| Runtime kill-switch cycle via console | PASS | bare disarm refused at worker; confirmed disarm queued `202` → applied (`command id=1 operator=rehearsal-agent`); re-engage applied (id=2); `session-end` (id=3) → graceful exit |
+| Failure drills (`--all-features`) | PASS 11/11 | stale-feed blocks execution · failed unwind holds capital · kill-switch refuses pre-network · restart reconciles by client id · timeout unwinds other leg · duplicate retry settles once · partial fill is never a position · balance mismatch aborts · presets IO-free · full fill holds reserve · rejection unwinds |
+| Restart drill / secret hygiene | PASS 1/1 · 3/3 | exact gate restoration; `.env.example` blank; sweep names path+label, never value |
+| Artifact secret sweep | CLEAN | no matches in existing artifacts; `occurrences.ndjson`/`live-proof.json` correctly absent (runner tape capture pending) |
+
+Session honesty: two bounded sessions attempted **0** arbs (`attempted=0`) —
+no cross-venue signal appeared while sampling live books for a few seconds
+each. The journal is empty because nothing happened, not because records were
+dropped: delivery failures (when they occurred) were logged as DROPPED with
+counts, never silently absorbed.
+
+### Findings (negative results recorded per the reporting rule)
+
+- **F1 — flag parser ignores space-separated values.** `arg_value` matches
+  only `--flag=value`; the space-separated form shown in LIVE_TRADING.md's own
+  usage block silently falls back to defaults. Discovered when an unscoped
+  boot refused on 1,105 malformed markets. Doc corrected to `=` form; runner
+  accepting both forms is left as an enhancement.
+- **F2 — pinned discovery URLs must not repeat appended filters.** The runner
+  appends `status=open` (Kalshi) and `closed=false&limit…&offset…`
+  (Polymarket); pinning a URL that already carries them yields venue HTTP 400.
+  RUNBOOK corrected to scope-only URLs.
+- **F3 — root-caused, not a defect: Kalshi's market-data websocket is
+  authenticated even for read-only books.** A credential-less dry-run session
+  therefore 401s on connect and never forms a Kalshi book (the runner reads
+  `KALSHI_ACCESS_KEY_ID`/`KALSHI_PRIVATE_KEY_PATH` for the feed in both
+  modes; the rehearsal environment deliberately held no secrets). The console
+  command cycle was re-rehearsed and passes end-to-end without books — order
+  flow is not required to exercise it. Consequence for HJ-151: a
+  representative-slate warmup needs read-only Kalshi credentials supplied by
+  the secret manager, else only the Polymarket side of the tape exists.
+- **F4 — operator error, caught safely by the catalog gate:** first rehearsal
+  launched unscoped discovery; recorded rather than relabeled.
+
+Paper-vs-live same-tape comparison rows will accrue here per session once
+micro-live begins (HJ-152); none exist yet, and none will be synthesized.
+
+---
+
 ## 9. Live-Readiness Session Log (August 24, 2026)
 
 Dated record of every live-readiness session per the proof protocol's

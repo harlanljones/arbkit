@@ -44,6 +44,11 @@ cargo run -p arbkit-exec --features runner --example prod_trader --release -- \
   `closed=false&limit…` filters, so a pinned URL must carry only the series
   or tag; duplicating a filter 400s at the venue. Unscoped defaults page
   through every open market on both venues and are noise.
+- Kalshi's market-data socket is authenticated even for read-only books:
+  without `KALSHI_ACCESS_KEY_ID` + `KALSHI_PRIVATE_KEY_PATH` in the session
+  environment the Kalshi feed 401s and never forms a book (Polymarket's is
+  anonymous). Dry-run still starts, streams, and rehearses the command path —
+  a full-slate warmup needs those read-only credentials supplied.
 - Flags parse only in `--flag=value` form; a space-separated value is
   silently ignored and the default applies instead (rehearsal finding,
   2026-08-24).

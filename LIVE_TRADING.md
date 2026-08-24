@@ -279,11 +279,16 @@ live in `RUNBOOK.md`.
 ```bash
 cargo run -p arbkit-exec --features runner --example prod_trader -- \
     --mode=dry-run \
-    [--url http://127.0.0.1:8787/api/live/ingest] [--token-env LIVE_INGEST_TOKEN] \
-    [--state prod-risk-state.json] [--journal prod-session.ndjson] \
-    [--window-ms 250] [--windows <n>] \
-    [--kalshi-markets-url <fixture-url>] [--poly-events-url <fixture-url>]
+    [--url=http://127.0.0.1:8787/api/live/ingest] [--token-env=LIVE_INGEST_TOKEN] \
+    [--state=prod-risk-state.json] [--journal=prod-session.ndjson] \
+    [--window-ms=250] [--windows=<n>] \
+    [--kalshi-markets-url=<fixture-url>] [--poly-events-url=<fixture-url>]
 ```
+
+Flags parse only in `--flag=value` form; a space-separated value is silently
+ignored and the default applies instead (rehearsal finding F1, 2026-08-24).
+Pinned discovery URLs must carry only their scope — the runner appends its own
+`status=open` / `closed=false&limit…` filters (finding F2).
 
 What it does per session:
 
