@@ -295,6 +295,7 @@ function sortHeader(activeKey: SortKey, descending: boolean, key: SortKey): "asc
 
 function TradeRow({ group }: { group: TradeGroup }) {
   const [expanded, setExpanded] = useState(false);
+  const [groupExpanded, setGroupExpanded] = useState(false);
   const { representative: record } = group;
   const delta = record.realizedProfitCents - record.expectedProfitCents;
   const sequenceNumbers = group.records.map((item) => item.seq);
@@ -311,7 +312,15 @@ function TradeRow({ group }: { group: TradeGroup }) {
         <th scope="row">
           {sequenceLabel}
           {group.records.length > 1 && (
-            <small className="trade-repeat-count">×{group.records.length}</small>
+            <button
+              type="button"
+              className="trade-repeat-count"
+              aria-expanded={groupExpanded}
+              aria-controls={`trade-group-${group.records[0].seq}`}
+              onClick={() => setGroupExpanded((value) => !value)}
+            >
+              {groupExpanded ? "Hide trades" : `×${group.records.length} trades`}
+            </button>
           )}
         </th>
         <td>{record.marketLabel}</td>
@@ -336,8 +345,36 @@ function TradeRow({ group }: { group: TradeGroup }) {
           </button>
         </td>
       </tr>
+      {groupExpanded && (
+        <GroupAuditRow group={group} id={`trade-group-${group.records[0].seq}`} />
+      )}
       {expanded && <LegAuditRow record={record} />}
     </>
+  );
+}
+
+function GroupAuditRow({ group, id }: { group: TradeGroup; id: string }) {
+  return (
+    <tr id={id} className="trade-group-row">
+      <td colSpan={9}>
+        <ol className="trade-group-audit" aria-label="Trades in this opportunity group">
+          {group.records.map((record) => (
+            <li key={record.seq}>
+              <span className="trade-group-seq">#{record.seq}</span>
+              <span>{record.detectionTimestampNs.toLocaleString()} ns</span>
+              <span>{record.edgeBps} bps</span>
+              <span>{money(record.expectedProfitCents)} expected</span>
+              <span className={record.realizedProfitCents > 0 ? "trade-group-positive" : "trade-group-negative"}>
+                {money(record.realizedProfitCents)} realized
+              </span>
+              <span className={`trade-badge trade-badge--${record.classification}`}>
+                {CLASSIFICATION_LABELS[record.classification]}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </td>
+    </tr>
   );
 }
 

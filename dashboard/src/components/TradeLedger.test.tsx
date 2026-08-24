@@ -194,7 +194,12 @@ describe("TradeLedger summary and table", () => {
     const table = document.querySelector("table.trade-table") as HTMLElement;
     expect(table.querySelector('[data-group-size="2"]')).toBeInTheDocument();
     expect(table).toHaveTextContent("0–2");
-    expect(table).toHaveTextContent("×2");
+    const groupToggle = screen.getByRole("button", { name: "×2 trades" });
+    expect(groupToggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(groupToggle);
+    expect(groupToggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("#0")).toBeInTheDocument();
+    expect(screen.getByText("#2")).toBeInTheDocument();
     expect(screen.getByText(/showing 2 of 2 grouped opportunities from 3 matching trades/i)).toBeInTheDocument();
   });
 });

@@ -1335,11 +1335,63 @@ footer a {
 .trade-repeat-count {
   display: block;
   margin-top: 4px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 0.68rem;
   font-weight: 400;
   letter-spacing: 0.04em;
+  background: transparent;
+  cursor: pointer;
+}
+
+.trade-repeat-count:hover,
+.trade-repeat-count:focus-visible {
+  border-bottom-color: currentColor;
+  color: var(--ink);
+}
+
+.trade-group-row td {
+  white-space: normal;
+  background: var(--paper-deep);
+}
+
+.trade-group-audit {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 24px;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  list-style-position: inside;
+}
+
+.trade-group-audit li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--soft-rule);
+}
+
+.trade-group-audit li:last-child {
+  border-bottom: 0;
+}
+
+.trade-group-seq {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.trade-group-positive {
+  color: var(--green);
+}
+
+.trade-group-negative {
+  color: var(--copper);
 }
 
 .trade-table tbody tr.is-loss td,
