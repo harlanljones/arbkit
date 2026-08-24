@@ -43,6 +43,37 @@ const COPPER = "#9a4d2f";
 
 type SortKey = "edgeBps" | "realizedProfitCents" | "deltaCents";
 
+type TradeGroup = {
+  records: TradeRecord[];
+  representative: TradeRecord;
+};
+
+function groupConsecutiveTrades(records: TradeRecord[]): TradeGroup[] {
+  const groups: TradeGroup[] = [];
+  let previousKey: string | null = null;
+
+  for (const record of records) {
+    // Sequence, detection time, and service latency identify an occurrence,
+    // not the opportunity itself. Ignore them so stable quote updates become
+    // one auditable group while the underlying records remain intact.
+    const opportunityKey = JSON.stringify({
+      ...record,
+      seq: 0,
+      detectionTimestampNs: 0,
+      latencyNs: 0,
+    });
+    const previous = groups.at(-1);
+    if (previous && opportunityKey === previousKey) {
+      previous.records.push(record);
+    } else {
+      groups.push({ records: [record], representative: record });
+      previousKey = opportunityKey;
+    }
+  }
+
+  return groups;
+}
+
 export function TradeLedger({ log, error }: { log: TradeLog | null; error?: string }) {
   if (error) {
     return (
@@ -108,9 +139,10 @@ function TradeLedgerBody({ log }: { log: TradeLog }) {
     });
   }, [log.records, activeClasses, profitableOnly, sortKey, sortDescending]);
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const grouped = useMemo(() => groupConsecutiveTrades(filtered), [filtered]);
+  const pageCount = Math.max(1, Math.ceil(grouped.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
-  const visible = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+  const visible = grouped.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   const toggleSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -167,7 +199,7 @@ function TradeLedgerBody({ log }: { log: TradeLog }) {
         aria-controls="trade-table-panel"
         onClick={() => setTableOpen((value) => !value)}
       >
-        {tableOpen ? "Hide the per-trade table" : `Inspect the per-trade table (${filtered.length})`}
+        {tableOpen ? "Hide the grouped trade table" : `Inspect grouped trades (${filtered.length})`}
       </button>
 
       {tableOpen && (
@@ -198,7 +230,7 @@ function TradeLedgerBody({ log }: { log: TradeLog }) {
       </div>
 
       <p className="method-note trade-count" aria-live="polite">
-        Showing {visible.length} of {filtered.length} matching trades
+        Showing {visible.length} of {grouped.length} grouped opportunities from {filtered.length} matching trades
         {filtered.length !== log.records.length ? ` (${log.records.length} total)` : ""}.
       </p>
 
@@ -206,7 +238,7 @@ function TradeLedgerBody({ log }: { log: TradeLog }) {
         <table className="history-table trade-table">
           <thead>
             <tr>
-              <th scope="col">#</th>
+              <th scope="col">Seq / repeats</th>
               <th scope="col">Market</th>
               <th scope="col" aria-sort={sortHeader(sortKey, sortDescending, "edgeBps")}>
                 <button type="button" onClick={() => toggleSort("edgeBps")}>Edge</button>
@@ -224,8 +256,8 @@ function TradeLedgerBody({ log }: { log: TradeLog }) {
             </tr>
           </thead>
           <tbody>
-            {visible.map((record) => (
-              <TradeRow key={record.seq} record={record} />
+            {visible.map((group) => (
+              <TradeRow key={group.records[0].seq} group={group} />
             ))}
           </tbody>
         </table>
@@ -261,14 +293,27 @@ function sortHeader(activeKey: SortKey, descending: boolean, key: SortKey): "asc
   return descending ? "descending" : "ascending";
 }
 
-function TradeRow({ record }: { record: TradeRecord }) {
+function TradeRow({ group }: { group: TradeGroup }) {
   const [expanded, setExpanded] = useState(false);
+  const { representative: record } = group;
   const delta = record.realizedProfitCents - record.expectedProfitCents;
+  const sequenceNumbers = group.records.map((item) => item.seq);
+  const sequenceLabel = group.records.length === 1
+    ? String(record.seq)
+    : `${Math.min(...sequenceNumbers)}–${Math.max(...sequenceNumbers)}`;
 
   return (
     <>
-      <tr className={record.realizedProfitCents > 0 ? undefined : "is-loss"}>
-        <th scope="row">{record.seq}</th>
+      <tr
+        className={record.realizedProfitCents > 0 ? undefined : "is-loss"}
+        data-group-size={group.records.length}
+      >
+        <th scope="row">
+          {sequenceLabel}
+          {group.records.length > 1 && (
+            <small className="trade-repeat-count">×{group.records.length}</small>
+          )}
+        </th>
         <td>{record.marketLabel}</td>
         <td>{record.edgeBps} bps</td>
         <td>{money(record.requestedStakeCents)}</td>

@@ -118,26 +118,26 @@ describe("TradeLedger summary and table", () => {
 
   it("starts with the per-trade table collapsed to keep the page short", () => {
     render(<TradeLedger log={log} />);
-    const toggle = screen.getByRole("button", { name: /inspect the per-trade table/i });
+    const toggle = screen.getByRole("button", { name: /inspect grouped trades/i });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(document.querySelector("table.trade-table")).toBeNull();
   });
 
   function openTradeTable() {
-    fireEvent.click(screen.getByRole("button", { name: /inspect the per-trade table/i }));
+    fireEvent.click(screen.getByRole("button", { name: /inspect grouped trades/i }));
     return document.querySelector("table.trade-table") as HTMLElement;
   }
 
   it("filters by classification chip and reports the count live", () => {
     render(<TradeLedger log={log} />);
-    expect(screen.getByRole("button", { name: /inspect the per-trade table \(2\)/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /inspect grouped trades \(2\)/i })).toBeInTheDocument();
 
     openTradeTable();
     expect(screen.getByText(/showing 2 of 2/i)).toBeInTheDocument();
 
     // Removing the phantom chip leaves only the profitable clean trade.
     fireEvent.click(screen.getByRole("button", { name: "Phantom" }));
-    expect(screen.getByText(/showing 1 of 1 matching trades \(2 total\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/showing 1 of 1 grouped opportunities from 1 matching trades \(2 total\)/i)).toBeInTheDocument();
     // The chart's data table also has role="table"; scope to the trade table.
     const table = document.querySelector("table.trade-table") as HTMLElement;
     expect(table).toHaveTextContent("300 bps");
@@ -151,7 +151,7 @@ describe("TradeLedger summary and table", () => {
     expect(chip).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(chip);
     expect(chip).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByText(/showing 1 of 1 matching trades \(2 total\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/showing 1 of 1 grouped opportunities from 1 matching trades \(2 total\)/i)).toBeInTheDocument();
     expect(screen.queryByText("-$50.00")).not.toBeInTheDocument();
   });
 
@@ -184,5 +184,17 @@ describe("TradeLedger summary and table", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: /show legs/i })[0]);
     expect(screen.getAllByText(/unfilled \(priceMoved\)/).length).toBeGreaterThan(0);
+  });
+
+  it("groups consecutive identical opportunities without changing trade totals", () => {
+    const repeated: TradeRecord = { ...clean, seq: 2, detectionTimestampNs: 2_000, latencyNs: 240 };
+    render(<TradeLedger log={{ ...log, records: [clean, repeated, phantom] }} />);
+    openTradeTable();
+
+    const table = document.querySelector("table.trade-table") as HTMLElement;
+    expect(table.querySelector('[data-group-size="2"]')).toBeInTheDocument();
+    expect(table).toHaveTextContent("0–2");
+    expect(table).toHaveTextContent("×2");
+    expect(screen.getByText(/showing 2 of 2 grouped opportunities from 3 matching trades/i)).toBeInTheDocument();
   });
 });

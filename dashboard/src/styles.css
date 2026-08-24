@@ -1332,6 +1332,16 @@ footer a {
   white-space: nowrap;
 }
 
+.trade-repeat-count {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
 .trade-table tbody tr.is-loss td,
 .trade-table tbody tr.is-loss th {
   color: var(--copper);
