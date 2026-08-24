@@ -55,7 +55,8 @@ Review the updated `public/data/runs/index.json` and generated snapshot file bef
 
 ## Cloudflare Workers Deployment
 
-The dashboard builds as a static Single Page Application (SPA) served via Cloudflare Workers:
+The dashboard builds as a static Single Page Application (SPA) served by the
+canonical `arbkit` Cloudflare Worker:
 
 ```bash
 # Dry run deploy
