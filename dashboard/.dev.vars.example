@@ -1,0 +1,3 @@
+# Copy to `.dev.vars` (gitignored) so `wrangler dev` authenticates ingest.
+# In production set the same secret with: `wrangler secret put LIVE_INGEST_TOKEN`
+LIVE_INGEST_TOKEN=change-me

@@ -1405,3 +1405,59 @@ footer a {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* Live position stream (LivePoc) */
+
+.live-statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  font-family: var(--mono);
+}
+
+.live-pill {
+  padding: 3px 10px;
+  border: 1px solid currentColor;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+.live-pill--connecting,
+.live-pill--reconnecting {
+  color: var(--accent, #9a4d2f);
+}
+
+.live-pill--open {
+  color: #2f6d43;
+}
+
+.live-pill--session-live {
+  color: #2f6d43;
+}
+
+.live-pill--session-stale {
+  color: #9a4d2f;
+}
+
+.live-pill--session-idle,
+.live-pill--session-ended {
+  color: var(--muted, #5c5a52);
+}
+
+.live-runid {
+  font-size: 0.72rem;
+  opacity: 0.65;
+}
+
+.chart-frame--live {
+  height: 220px;
+}
+
+.live-funnel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}

@@ -1,0 +1,156 @@
+//! Pure frame reducer for the live session view.
+//!
+//! The WebSocket hook hands validated frames here; React state is produced
+//! only by [`applyLiveFrame`], which keeps the arithmetic out of components
+//! and the whole display model unit-testable without a socket. The server
+//! owns every cumulative number — this reducer adopts, never recomputes.
+//! The one thing it maintains locally is presentation history: a capped
+//! ledger of recent rows and a capped ROI sampling series for the sparkline.
+
+import type { Capital, Funnel, SessionHeader, Totals, ViewerFrame } from "./liveSchema";
+import type { TradeRecord } from "./schema";
+
+/** Recent ledger rows kept for display; totals live server-side. */
+export const MAX_ITEMS = 500;
+/** ROI samples kept for the sparkline (~1 per totals push, burst-tolerant). */
+export const MAX_ROI_POINTS = 720;
+
+export type ConnectionStatus = "connecting" | "open" | "reconnecting";
+export type SessionStatus = "idle" | "live" | "stale" | "ended";
+
+export interface RoiPoint {
+  atMs: number;
+  theoreticalBps: number;
+  realizedBps: number;
+}
+
+export interface LiveSessionState {
+  connection: ConnectionStatus;
+  session: SessionHeader | null;
+  sessionStatus: SessionStatus;
+  totals: Totals | null;
+  funnel: Funnel | null;
+  capital: Capital | null;
+  windowsCompleted: number;
+  seqCursor: number;
+  items: TradeRecord[];
+  roiSeries: RoiPoint[];
+  lastFrameAtMs: number | null;
+}
+
+export const initialLiveSession: LiveSessionState = {
+  connection: "connecting",
+  session: null,
+  sessionStatus: "idle",
+  totals: null,
+  funnel: null,
+  capital: null,
+  windowsCompleted: 0,
+  seqCursor: -1,
+  items: [],
+  roiSeries: [],
+  lastFrameAtMs: null,
+};
+
+function capTail<T>(rows: T[], max: number): T[] {
+  return rows.length > max ? rows.slice(rows.length - max) : rows;
+}
+
+export function applyLiveFrame(
+  state: LiveSessionState,
+  frame: ViewerFrame,
+  nowMs: number,
+): LiveSessionState {
+  switch (frame.t) {
+    case "hello":
+      // Liveness proof only; aggregates ride on snapshot/totals frames.
+      return { ...state, connection: "open", lastFrameAtMs: nowMs };
+
+    case "snapshot":
+      // Fully authoritative: adopt wholesale, including its ring window.
+      return {
+        ...state,
+        connection: "open",
+        session: frame.session,
+        sessionStatus: frame.status,
+        totals: frame.totals,
+        funnel: frame.funnel,
+        capital: frame.capital,
+        windowsCompleted: frame.windowsCompleted,
+        seqCursor: Math.max(state.seqCursor, frame.seqCursor),
+        items: capTail(frame.items, MAX_ITEMS),
+        roiSeries: capTail(
+          [
+            ...state.roiSeries,
+            {
+              atMs: nowMs,
+              theoreticalBps: frame.totals.roiTheoreticalBps,
+              realizedBps: frame.totals.roiRealizedBps,
+            },
+          ],
+          MAX_ROI_POINTS,
+        ),
+        lastFrameAtMs: nowMs,
+      };
+
+    case "positions": {
+      // Rows arrive in ascending seq within a session; anything at or below
+      // the cursor is a resume replay already on screen.
+      const fresh = frame.items.filter((record) => record.seq > state.seqCursor);
+      if (fresh.length === 0) return state;
+      // Bare position batches advance the dedupe cursor too — totals frames
+      // usually carry it, but the ledger must stay self-consistent even
+      // between them.
+      const nextCursor = fresh.reduce((max, record) => Math.max(max, record.seq), state.seqCursor);
+      return {
+        ...state,
+        seqCursor: nextCursor,
+        items: capTail([...state.items, ...fresh], MAX_ITEMS),
+        lastFrameAtMs: nowMs,
+      };
+    }
+
+    case "totals": {
+      const nextCursor = Math.max(state.seqCursor, frame.seqCursor);
+      if (
+        state.totals !== null &&
+        state.sessionStatus === frame.status &&
+        state.seqCursor === nextCursor &&
+        shallowTotalsEqual(state.totals, frame.totals)
+      ) {
+        // Identical repeat push (heartbeat-adjacent): keep history sparse.
+        return { ...state, lastFrameAtMs: nowMs };
+      }
+      return {
+        ...state,
+        sessionStatus: frame.status,
+        totals: frame.totals,
+        funnel: frame.funnel,
+        capital: frame.capital,
+        windowsCompleted: frame.windowsCompleted,
+        seqCursor: nextCursor,
+        roiSeries: capTail(
+          [
+            ...state.roiSeries,
+            {
+              atMs: nowMs,
+              theoreticalBps: frame.totals.roiTheoreticalBps,
+              realizedBps: frame.totals.roiRealizedBps,
+            },
+          ],
+          MAX_ROI_POINTS,
+        ),
+        lastFrameAtMs: nowMs,
+      };
+    }
+  }
+}
+
+function shallowTotalsEqual(a: Totals, b: Totals): boolean {
+  return (
+    a.trades === b.trades &&
+    a.stakedCents === b.stakedCents &&
+    a.theoreticalProfitCents === b.theoreticalProfitCents &&
+    a.realizedProfitCents === b.realizedProfitCents
+  );
+}

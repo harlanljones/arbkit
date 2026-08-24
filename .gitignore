@@ -9,6 +9,7 @@ dashboard/dist/
 dashboard/test-results/
 dashboard/playwright-report/
 dashboard/.wrangler/
+dashboard/.dev.vars
 # npm (package-lock.json) is the single package manager for the dashboard;
 # bun-generated lockfiles break Cloudflare Pages' frozen-lockfile installs.
 dashboard/bun.lock

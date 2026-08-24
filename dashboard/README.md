@@ -66,3 +66,25 @@ npm run deploy
 ```
 
 Configuration is defined in [`wrangler.jsonc`](wrangler.jsonc).
+
+---
+
+## Live Position Stream
+
+Beyond the static proof ledger, the worker hosts a live paper-trading view:
+`worker/index.ts` routes `/api/live/*` to the single `PositionRoom` Durable
+Object, which owns all session arithmetic (totals, ROI bps floored toward
+negative infinity, disposition funnel) and pushes authoritative frames to any
+number of read-only WebSocket viewers.
+
+- **Producer:** `cargo run -p arbkit-engine --example live_runner -- --url <ingest-url> --token-env ARBLIVE_TOKEN`
+  streams detected-and-settled positions from the pipeline workload in fixed
+  wall-clock windows (see the example's docs for flags).
+- **Ingest auth:** `LIVE_INGEST_TOKEN` — set locally via `.dev.vars`
+  (see [`.dev.vars.example`](.dev.vars.example)), in production via
+  `wrangler secret put LIVE_INGEST_TOKEN`.
+- **Viewer:** `wss://<host>/api/live/ws`, public and read-only; clients may
+  send `{ "t": "resume", "afterSeq": N }` to replay missed ledger rows.
+- **Staleness:** a session whose heartbeats stop for 20 s is marked stale by
+  alarm and stays visible as such until its runner returns or a new session
+  opens.

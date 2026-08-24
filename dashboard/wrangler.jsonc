@@ -1,9 +1,28 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "arbkit-dashboard",
+  "main": "./worker/index.ts",
   "compatibility_date": "2026-08-21",
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    "binding": "ASSETS"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "POSITION_ROOM",
+        "class_name": "PositionRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["PositionRoom"]
+    }
+  ],
+  "observability": {
+    "enabled": false
   }
 }

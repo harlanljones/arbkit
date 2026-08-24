@@ -18,3 +18,7 @@ arbkit-sim = { path = "../arbkit-sim" }
 proptest = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
+# Live runner only (example-level): sync HTTP client for the ingest stream.
+# Example code sits outside every crate's src/, so no production target and
+# above all not the hot path ever sees this.
+ureq = { version = "2", default-features = false, features = ["tls"] }

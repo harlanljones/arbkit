@@ -364,9 +364,41 @@ mod tests {
     }
 
     fn sample_signal_event() -> SignalEvent {
+        // Plan mirrors the legs handed to `simulate_report` above so the
+        // event is a faithful stand-in for a real ring delivery.
+        let legs = [
+            Leg {
+                venue: 1,
+                outcome: 10,
+                quoted: Prob::from_cents(48).unwrap(),
+                fee: Fee::None,
+                capacity: 80_000,
+                increment: 1,
+            },
+            Leg {
+                venue: 0,
+                outcome: 11,
+                quoted: Prob::from_cents(46).unwrap(),
+                fee: Fee::StakeFeeBps(350),
+                capacity: 50_000,
+                increment: 100,
+            },
+        ];
+        let mut plan = [Leg {
+            venue: 0,
+            outcome: 0,
+            quoted: Prob::from_cents(50).unwrap(),
+            fee: Fee::None,
+            capacity: 0,
+            increment: 1,
+        }; MAX_CHUNKS];
+        plan[..legs.len()].copy_from_slice(&legs);
+
         SignalEvent {
             market_id: 0,
             signal: sample_signal(),
+            plan,
+            plan_len: 2,
             ingest_timestamp_ns: 5_000,
             signal_timestamp_ns: 5_250,
             latency_ns: 250,

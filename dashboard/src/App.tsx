@@ -25,6 +25,9 @@ const VerificationChart = lazy(() =>
 const TradeLedger = lazy(() =>
   import("./components/TradeLedger").then((module) => ({ default: module.TradeLedger })),
 );
+const LivePoc = lazy(() =>
+  import("./components/LivePoc").then((module) => ({ default: module.LivePoc })),
+);
 
 function ChartFallback() {
   return <div className="chart-fallback" role="status">Preparing the evidence plot…</div>;
@@ -153,6 +156,7 @@ export function App() {
           <a href="#performance">Performance</a>
           <a href="#execution">Execution</a>
           <a href="#trades">Trades</a>
+          <a href="#live">Live</a>
           <a href="#verification">Verification</a>
           <a href="#history">History</a>
         </nav>
@@ -294,6 +298,20 @@ export function App() {
             ) : (
               <TradeLedger log={tradeLog} error={tradeStatus === "error" ? tradeError : undefined} />
             )}
+          </Suspense>
+        </section>
+
+        <section className="section-block live-section" id="live" aria-labelledby="live-heading">
+          <div className="section-intro">
+            <h2 id="live-heading">The proof stream, as it happens.</h2>
+            <p>
+              While a runner is streaming, every paper position the engine locks arrives here the
+              moment its simulation settles — theoretical worst-case edge beside what settlement
+              actually kept, in the same pessimistic integers as the recorded ledger.
+            </p>
+          </div>
+          <Suspense fallback={<ChartFallback />}>
+            <LivePoc />
           </Suspense>
         </section>
 
