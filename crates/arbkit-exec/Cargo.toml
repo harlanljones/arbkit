@@ -1,15 +1,15 @@
 [package]
-name = "arbkit-feed"
+name = "arbkit-exec"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Venue connectors, feed event models, and tape recorder"
+description = "Explicitly gated live and dry-run execution for arbkit"
 
 [features]
 default = []
-live = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:reqwest"]
+live = ["dep:reqwest"]
 
 [dependencies]
 arbkit-core = { path = "../arbkit-core" }
@@ -17,9 +17,6 @@ arbkit-match = { path = "../arbkit-match" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1", features = ["sync", "time", "rt", "macros"], optional = true }
-tokio-tungstenite = { version = "0.26", optional = true }
-futures-util = { version = "0.3", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 
 [dev-dependencies]

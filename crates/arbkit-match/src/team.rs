@@ -1084,6 +1084,54 @@ pub fn lookup_team(raw: &str, sport_hint: Option<Sport>) -> Result<&'static Cano
     best_match.ok_or_else(|| MatchError::UnrecognizedTeam(raw.to_string()))
 }
 
+/// Lookup a canonical team from a raw name, abbreviation, or alias, rejecting
+/// aliases that match more than one canonical team across all sports.
+///
+/// Unlike [`lookup_team`], this never guesses when a sport hint is absent:
+/// a city-only alias such as `"Boston"` (Celtics, Red Sox, and Bruins) is an
+/// error, while a mascot or full-name alias that belongs to exactly one team
+/// still resolves. Discovery code pairing instruments across venues uses this
+/// so an ambiguous venue label can never silently attach to the wrong sport.
+pub fn lookup_team_unique(raw: &str) -> Result<&'static CanonicalTeam> {
+    let normalized = normalize_string(raw);
+    if normalized.is_empty() {
+        return Err(MatchError::UnrecognizedTeam(raw.to_string()));
+    }
+
+    let mut primary: Option<&'static CanonicalTeam> = None;
+    for mapping in ALIASES {
+        if mapping.alias == normalized {
+            if let Some(first) = primary {
+                if first != mapping.team {
+                    return Err(MatchError::AmbiguousTeam(raw.to_string()));
+                }
+            } else {
+                primary = Some(mapping.team);
+            }
+        }
+    }
+
+    if let Some(team) = primary {
+        return Ok(team);
+    }
+
+    // Secondary pass: exact team-code match only, with the same uniqueness rule.
+    let mut secondary: Option<&'static CanonicalTeam> = None;
+    for mapping in ALIASES {
+        if mapping.team.code.eq_ignore_ascii_case(&normalized) {
+            if let Some(first) = secondary {
+                if first != mapping.team {
+                    return Err(MatchError::AmbiguousTeam(raw.to_string()));
+                }
+            } else {
+                secondary = Some(mapping.team);
+            }
+        }
+    }
+
+    secondary.ok_or_else(|| MatchError::UnrecognizedTeam(raw.to_string()))
+}
+
 /// Parse a raw matchup string into canonical home and away teams.
 ///
 /// Supports common patterns:

@@ -1,0 +1,22 @@
+# Live trading integration acceptance gates
+
+- [x] G1: Workspace builds with the live feed feature and execution crate.
+  - CHECK: `cargo check --workspace --all-features`
+  - EXPECT: `Finished`
+  - EVIDENCE: cargo check --workspace --all-features passed (Finished)
+- [x] G2: Workspace tests cover execution risk, hedging, catalog validation, and existing regressions.
+  - CHECK: `cargo test --workspace --all-features`
+  - EXPECT: `test result: ok`
+  - EVIDENCE: cargo test --workspace --all-features passed; all test result lines were ok
+- [x] G3: Formatting and linting pass for the implemented Rust surfaces.
+  - CHECK: `cargo fmt --all --check && echo format-check-passed`
+  - EXPECT: `format-check-passed`
+  - EVIDENCE: cargo fmt --all --check and workspace clippy passed
+- [x] G4: Dashboard accepts and renders live execution records without recalculating authoritative PnL.
+  - CHECK: `npm --prefix dashboard test -- --run`
+  - EXPECT: `Tests  passed`
+  - EVIDENCE: dashboard Vitest 7 files / 50 tests passed
+- [x] G5: Live mode cannot place orders when the kill switch is enabled or risk limits fail.
+  - CHECK: `cargo test -p arbkit-exec --all-features`
+  - EXPECT: `test result: ok`
+  - EVIDENCE: arbkit-exec tests 2 passed; kill switch and partial-fill unwind covered

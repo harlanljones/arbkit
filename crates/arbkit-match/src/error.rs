@@ -24,6 +24,11 @@ pub enum MatchError {
     #[error("unrecognized team name or code: '{0}'")]
     UnrecognizedTeam(String),
 
+    /// A team string matched more than one canonical team, so no single
+    /// interpretation is safe without a sport hint.
+    #[error("ambiguous team name: '{0}' matches multiple teams")]
+    AmbiguousTeam(String),
+
     /// A matchup string could not be parsed into home and away teams.
     #[error("malformed matchup string: '{0}'")]
     MalformedMatchup(String),

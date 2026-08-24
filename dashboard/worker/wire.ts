@@ -47,13 +47,17 @@ export const tradeRecordSchema = z.object({
   requestedStakeCents: moneyCents,
   expectedProfitCents: moneyCents,
   worstCaseProfitCents: moneyCents,
-  realizedProfitCents: moneyCents,
+  realizedProfitCents: moneyCents.nullable(),
   slippageCents: moneyCents,
   feesPaidCents: z.number().int(),
   fillRatioBps: z.number().int(),
   classification: z.enum(["clean", "proportional", "phantom", "brokenLeg"]),
   chased: z.boolean(),
   legs: z.array(tradeLegSchema).max(4),
+  executionMode: z.enum(["paper", "live"]).optional(),
+  venueOrderIds: z.array(z.string().min(1)).max(4).optional(),
+  filledStakeCents: moneyCents.optional(),
+  settlementStatus: z.enum(["open", "settled", "unwound"]).optional(),
 });
 
 export type TradeRecord = z.infer<typeof tradeRecordSchema>;

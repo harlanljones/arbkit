@@ -40,7 +40,7 @@ flowchart LR
 
 ## 1. Workspace Architecture & Crate Responsibilities
 
-The codebase is organized into five specialized crates enforcing strict separation of concerns and dependency isolation:
+The codebase is organized into six specialized crates enforcing strict separation of concerns and dependency isolation:
 
 ```
 crates/arbkit-core     Prices, books, fees, detection. No I/O, no clock, no network.
@@ -48,6 +48,7 @@ crates/arbkit-match    Canonical event registry, team normalizer, string-to-ID i
 crates/arbkit-feed     Polymarket and Kalshi parsers, binary tape recorder and player.
 crates/arbkit-engine   Lock-free SPSC ring buffers, preallocated book slab, hot loop, latency histogram.
 crates/arbkit-sim      Paper trading simulator, latency modeling, phantom-rate measurement.
+crates/arbkit-exec     Risk-gated dry-run/live execution boundary and proof reports.
 ```
 
 ### Dependency Isolation Guarantees
@@ -59,6 +60,7 @@ crates/arbkit-sim      Paper trading simulator, latency modeling, phantom-rate m
 | [`arbkit-feed`](crates/arbkit-feed) | Wire message parsing & zero-allocation binary tape | Stack-allocated `Copy` events (`FeedEvent`). | `arbkit-core`, `arbkit-match`, `serde`, `serde_json` |
 | [`arbkit-engine`](crates/arbkit-engine) | Hot loop, SPSC ring, flat slab, latency histogram | **No locks, no allocations, single-threaded execution.** | `arbkit-core`, `arbkit-match`, `arbkit-feed`, `thiserror` |
 | [`arbkit-sim`](crates/arbkit-sim) | Paper trading, queue front-running, phantom rate | Pure integer `Cents` accounting, zero floats in logic. | `arbkit-core`, `arbkit-match`, `arbkit-feed`, `arbkit-engine` |
+| [`arbkit-exec`](crates/arbkit-exec) | Risk gate, hedge orchestration, live proof records | Downstream of the signal ring; never imported by the hot loop. | `arbkit-core`, `arbkit-match`, `serde`, optional `reqwest` |
 
 > [!IMPORTANT]
 > CI validates via `cargo tree` that `arbkit-core` never picks up an I/O crate (`tokio`, `reqwest`, `hyper`, `mio`, `socket2`, `tungstenite`). The core domain runs offline in milliseconds and is verified across 100% deterministic test suites.
@@ -154,3 +156,13 @@ The entire workspace is verified through unit tests, integration pipelines, doc 
 - [x] **M4** — `arbkit-engine`: the hot loop, lock-free SPSC rings, latency histogram.
 - [x] **M5** — `arbkit-sim`: paper trading, queue degradation, phantom-rate measurement.
 - [x] **M6** — Benchmarking & tuning against the $50\text{ }\mu\text{s}$ budget (Achieved: **$p99 = 0.10–0.25\text{ }\mu\text{s}$** across measured hosts).
+## Opt-in live execution boundary
+
+`arbkit-feed`'s `live` feature contains Tokio WebSocket connectors and a
+bridge into the synchronous feed ring. `arbkit-exec` consumes emitted signals
+after they leave the ring. Its `RiskGate` reserves per-venue capital before
+submission, `HedgedExecutor` requires both legs to fill, and partial hedges are
+unwound and reported as live phantoms. The default CLI mode is dry-run and the
+kill switch is enabled unless `ARBKIT_KILL_SWITCH=0` is explicitly supplied.
+Credentials belong only in environment variables or an external secret
+manager; they are never committed.

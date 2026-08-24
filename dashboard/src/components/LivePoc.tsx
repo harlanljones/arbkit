@@ -59,6 +59,7 @@ export function LivePoc({ url }: { url?: string }) {
     () => live.items.slice(-VISIBLE_ROWS).reverse(),
     [live.items],
   );
+  const containsLiveExecution = live.items.some((item) => item.executionMode === "live");
 
   return (
     <div className="trade-ledger live-poc">
@@ -111,9 +112,9 @@ export function LivePoc({ url }: { url?: string }) {
           <RecentTable rows={recentRows} totalRows={live.items.length} />
 
           <p className="method-note">
-            Paper trading on a synthetic workload: theoretical profit is the worst-case guarantee at
-            lock time; realized profit reflects simulated fills after fees, slippage and queue decay.
-            This is not live trading, and no orders are ever placed.
+            {containsLiveExecution
+              ? "Live Trading: real capital, not synthetic. Realized cents and settlement status come from the execution service."
+              : "Paper trading on a synthetic workload: theoretical profit is the worst-case guarantee at lock time; realized profit reflects simulated fills after fees, slippage and queue decay. No orders are placed."}
           </p>
         </>
       )}
@@ -304,13 +305,13 @@ function RecentTable({
           </thead>
           <tbody>
             {rows.map((record) => (
-              <tr key={record.seq} className={record.realizedProfitCents > 0 ? undefined : "is-loss"}>
+              <tr key={record.seq} className={(record.realizedProfitCents ?? 0) > 0 ? undefined : "is-loss"}>
                 <th scope="row">{record.seq}</th>
                 <td>{record.marketLabel}</td>
                 <td>{record.edgeBps} bps</td>
                 <td>{money(record.requestedStakeCents)}</td>
                 <td>{money(record.worstCaseProfitCents)}</td>
-                <td>{money(record.realizedProfitCents)}</td>
+                <td>{money(record.realizedProfitCents ?? 0)}</td>
                 <td>
                   <span
                     className={`trade-badge trade-badge--${record.classification}`}

@@ -42,11 +42,11 @@ export function tradeMetrics(records: TradeRecord[]): {
   let totalRealizedCents = 0;
 
   for (const record of records) {
-    if (record.realizedProfitCents > 0) hits += 1;
+    if ((record.realizedProfitCents ?? 0) > 0) hits += 1;
     if (record.classification === "phantom" || record.classification === "brokenLeg") phantoms += 1;
     if (record.classification === "clean") clean += 1;
     totalExpectedCents += record.expectedProfitCents;
-    totalRealizedCents += record.realizedProfitCents;
+    totalRealizedCents += record.realizedProfitCents ?? 0;
   }
 
   return {

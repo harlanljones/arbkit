@@ -117,7 +117,12 @@ impl KalshiParser {
         let envelope: KalshiEnvelope = serde_json::from_str(raw_json)
             .map_err(|e| FeedError::ParseError(format!("Kalshi JSON error: {e}")))?;
 
-        let seq = envelope.seq.unwrap_or(0);
+        // Older captures put `seq` on the envelope while current Kalshi
+        // frames put it inside `msg`. Accept both wire layouts.
+        let seq = envelope
+            .seq
+            .or_else(|| envelope.msg.as_ref().and_then(|m| m.seq))
+            .unwrap_or(0);
         let msg_type = envelope.msg_type.as_deref().unwrap_or("");
 
         let timestamp_ns = envelope
@@ -301,6 +306,7 @@ struct KalshiEnvelope {
 
 #[derive(Debug, Deserialize)]
 struct KalshiMsg {
+    seq: Option<u64>,
     ts: Option<u64>,
     price: Option<u32>,
     yes_price: Option<u32>,

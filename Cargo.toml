@@ -5,6 +5,7 @@ members = [
     "crates/arbkit-feed",
     "crates/arbkit-engine",
     "crates/arbkit-sim",
+    "crates/arbkit-exec",
 ]
 resolver = "2"
 

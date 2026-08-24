@@ -127,14 +127,16 @@ function TradeLedgerBody({ log }: { log: TradeLog }) {
     const rows = log.records.filter(
       (record) =>
         activeClasses.has(record.classification) &&
-        (!profitableOnly || record.realizedProfitCents > 0),
+        (!profitableOnly || (record.realizedProfitCents ?? 0) > 0),
     );
     const direction = sortDescending ? -1 : 1;
     return [...rows].sort((a, b) => {
-      const deltaA = a.realizedProfitCents - a.expectedProfitCents;
-      const deltaB = b.realizedProfitCents - b.expectedProfitCents;
-      const left = sortKey === "edgeBps" ? a.edgeBps : sortKey === "realizedProfitCents" ? a.realizedProfitCents : deltaA;
-      const right = sortKey === "edgeBps" ? b.edgeBps : sortKey === "realizedProfitCents" ? b.realizedProfitCents : deltaB;
+      const realizedA = a.realizedProfitCents ?? 0;
+      const realizedB = b.realizedProfitCents ?? 0;
+      const deltaA = realizedA - a.expectedProfitCents;
+      const deltaB = realizedB - b.expectedProfitCents;
+      const left = sortKey === "edgeBps" ? a.edgeBps : sortKey === "realizedProfitCents" ? realizedA : deltaA;
+      const right = sortKey === "edgeBps" ? b.edgeBps : sortKey === "realizedProfitCents" ? realizedB : deltaB;
       return (left - right) * direction;
     });
   }, [log.records, activeClasses, profitableOnly, sortKey, sortDescending]);
@@ -302,7 +304,7 @@ function TradeRow({ group }: { group: TradeGroup }) {
       edgeBps: summary.edgeBps + item.edgeBps,
       requestedStakeCents: summary.requestedStakeCents + item.requestedStakeCents,
       expectedProfitCents: summary.expectedProfitCents + item.expectedProfitCents,
-      realizedProfitCents: summary.realizedProfitCents + item.realizedProfitCents,
+      realizedProfitCents: summary.realizedProfitCents + (item.realizedProfitCents ?? 0),
     }),
     { edgeBps: 0, requestedStakeCents: 0, expectedProfitCents: 0, realizedProfitCents: 0 },
   );
@@ -377,8 +379,8 @@ function GroupAuditRow({ group, id }: { group: TradeGroup; id: string }) {
               <span>{record.detectionTimestampNs.toLocaleString()} ns</span>
               <span>{record.edgeBps} bps</span>
               <span>{money(record.expectedProfitCents)} expected</span>
-              <span className={record.realizedProfitCents > 0 ? "trade-group-positive" : "trade-group-negative"}>
-                {money(record.realizedProfitCents)} realized
+              <span className={(record.realizedProfitCents ?? 0) > 0 ? "trade-group-positive" : "trade-group-negative"}>
+                {money(record.realizedProfitCents ?? 0)} realized
               </span>
               <span className={`trade-badge trade-badge--${record.classification}`}>
                 {CLASSIFICATION_LABELS[record.classification]}
@@ -425,7 +427,7 @@ function describeStatus(status: TradeRecord["legs"][number]["status"]): string {
 function ExpectedVsRealizedChart({ records }: { records: TradeRecord[] }) {
   const points = records.map((record) => ({
     expected: record.expectedProfitCents,
-    realized: record.realizedProfitCents,
+    realized: record.realizedProfitCents ?? 0,
   }));
   const bounds = points.reduce(
     (acc, point) => ({
@@ -504,7 +506,7 @@ function ExpectedVsRealizedChart({ records }: { records: TradeRecord[] }) {
               <tr key={record.seq}>
                 <th scope="row">{record.seq}</th>
                 <td>{record.expectedProfitCents.toLocaleString()}</td>
-                <td>{record.realizedProfitCents.toLocaleString()}</td>
+                <td>{(record.realizedProfitCents ?? 0).toLocaleString()}</td>
               </tr>
             ))}
           </tbody>

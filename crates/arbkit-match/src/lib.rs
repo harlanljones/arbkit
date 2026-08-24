@@ -20,6 +20,7 @@
 #![deny(missing_docs)]
 
 pub mod alignment;
+pub mod catalog;
 pub mod error;
 pub mod intern;
 pub mod kalshi;
@@ -31,9 +32,12 @@ pub use alignment::{
     align_moneyline, align_spread, align_total, validate_binary_pair, OutcomeSide,
 };
 pub use arbkit_core::{Line, MarketId, MarketKind, OutcomeId, VenueId};
+pub use catalog::{parse_poly_token_id, VenueInstrument, VenueInstrumentMap, VenueInstrumentPair};
 pub use error::{MatchError, Result};
 pub use intern::{StringInterner, VenueRegistry};
 pub use kalshi::{parse_kalshi_ticker, KalshiTicker};
 pub use lookup::{HotLookupTable, OutcomeRecord};
 pub use registry::{CanonicalEvent, CanonicalMarket, CanonicalOutcome, CanonicalRegistry};
-pub use team::{lookup_team, normalize_string, parse_matchup, CanonicalTeam, Matchup, Sport};
+pub use team::{
+    lookup_team, lookup_team_unique, normalize_string, parse_matchup, CanonicalTeam, Matchup, Sport,
+};

@@ -28,10 +28,10 @@ Engineers run the release pipeline locally, review the console report and genera
 
 ## Capabilities and Constraints
 
-- Five Rust crates cover pricing and detection, matching, feeds, the engine, and paper-trading simulation.
+- Six Rust crates cover pricing and detection, matching, feeds, the engine, paper-trading simulation, and the opt-in execution boundary.
 - Benchmark runs are host-specific and must carry environment and workload provenance.
 - Dashboard results are generated, reviewed, and committed; there is no live upload API or Cloudflare data store.
-- Synthetic workloads and paper-trading results must always be labeled as such.
+- Synthetic workloads and paper-trading results must always be labeled as such; live records must carry authoritative order ids and settlement status.
 - Different-host measurements may be compared, but must not be presented as same-machine performance trends.
 
 ## Brand Commitments

@@ -28,6 +28,8 @@
 
 pub mod error;
 pub mod event;
+#[cfg(feature = "live")]
+pub mod live;
 pub mod tape;
 pub mod venues;
 

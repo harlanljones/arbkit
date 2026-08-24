@@ -135,7 +135,7 @@ export class PositionSession {
           this.trades += 1;
           this.stakedCents += record.requestedStakeCents;
           this.theoreticalProfitCents += record.worstCaseProfitCents;
-          this.realizedProfitCents += record.realizedProfitCents;
+          this.realizedProfitCents += record.realizedProfitCents ?? 0;
           this.expectedProfitCents += record.expectedProfitCents;
           this.feesPaidCents += record.feesPaidCents;
           this.funnelCounts[record.classification] += 1;

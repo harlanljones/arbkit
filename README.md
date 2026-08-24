@@ -44,6 +44,7 @@ being equal. Both of those subtractions are the point.
 - [What Makes This Hard](#what-makes-this-hard)
 - [About "Low Latency"](#about-low-latency)
 - [Workspace Layout](#workspace-layout)
+- [Live Trading Integration](LIVE_TRADING.md)
 - [Quickstart & Verification](#quickstart--verification)
 - [Performance & Simulation Highlights](#performance--simulation-highlights)
 - [Results Dashboard](#results-dashboard)
@@ -230,7 +231,7 @@ The dashboard builds to static assets for the canonical `arbkit` Cloudflare Work
 - **Rounding always favours the pessimistic reading:** Payouts floor, effective prices ceil, stakes round down. Every number reported should be one you can beat, not one you have to hit.
 - **No arbitrage is not an error:** `detect` returns `Ok(None)` for every unviable market condition — no edge, no depth, an edge that stake rounding ate. Errors are reserved for malformed input.
 - **Staleness is a state:** Exchange feeds are a snapshot plus sequenced deltas. A skipped sequence number means the local book is wrong and cannot be repaired by interpolation, so it goes out of service until a fresh snapshot arrives. A gap degrades into silence rather than into confidently wrong signals.
-- **Scope limitation:** Live order placement is out of scope. The engine terminates at verified paper-trading simulation.
+- **Live trading is opt-in:** `arbkit-feed` exposes feature-gated WebSocket connectors and `arbkit-exec` owns risk-gated adapters. The default mode is dry-run and `ARBKIT_KILL_SWITCH=1`; paper and live fills remain explicitly labeled.
 
 ## License
 

@@ -226,7 +226,7 @@ impl PolymarketParser {
             }
 
             "price_change" | "delta" => {
-                if let Some(changes) = frame.changes {
+                if let Some(changes) = frame.changes.or(frame.price_changes) {
                     for change in changes {
                         if let (Some(price_s), Some(size_s)) = (change.price, change.size) {
                             let prob = parse_decimal_prob(&price_s)?;
@@ -307,6 +307,10 @@ struct PolymarketFrame {
     bids: Option<Vec<PolymarketPriceLevel>>,
     asks: Option<Vec<PolymarketPriceLevel>>,
     changes: Option<Vec<PolymarketChange>>,
+    /// The CLOB wire protocol calls this field `price_changes`; `changes` is
+    /// retained above for older recorded fixtures.
+    #[serde(rename = "price_changes")]
+    price_changes: Option<Vec<PolymarketChange>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -454,6 +458,35 @@ mod tests {
                 assert_eq!(*side, TradeSide::Buy);
             }
             _ => panic!("Expected Trade event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_polymarket_wire_price_changes_and_asset_id() {
+        let mut parser = PolymarketParser::new();
+        let json = r#"{
+            "event_type": "price_change",
+            "asset_id": "123",
+            "price_changes": [
+                {"asset_id": "123", "price": "0.61", "size": "10", "side": "BUY"},
+                {"asset_id": "123", "price": "0.62", "size": "0", "side": "SELL"}
+            ]
+        }"#;
+
+        let msg = parser.parse_json(json, 7, 8, 42).unwrap();
+        assert_eq!(msg.len(), 2);
+        match &msg.events()[0] {
+            FeedEvent::Delta {
+                level, is_delete, ..
+            } => {
+                assert_eq!(level.price.ppm(), 610_000);
+                assert!(!is_delete);
+            }
+            _ => panic!("expected delta"),
+        }
+        match &msg.events()[1] {
+            FeedEvent::Delta { is_delete, .. } => assert!(*is_delete),
+            _ => panic!("expected delete delta"),
         }
     }
 }
