@@ -52,7 +52,8 @@ function defaultLiveUrl(): string {
 }
 
 export function LivePoc({ url }: { url?: string }) {
-  const live = useLiveSession(url ?? defaultLiveUrl());
+  const streamUrl = url ?? defaultLiveUrl();
+  const live = useLiveSession(streamUrl);
 
   const recentRows = useMemo(
     () => live.items.slice(-VISIBLE_ROWS).reverse(),
@@ -61,16 +62,40 @@ export function LivePoc({ url }: { url?: string }) {
 
   return (
     <div className="trade-ledger live-poc">
-      <div className="live-statusbar" role="status" aria-live="polite">
-        <span className={`live-pill live-pill--${live.connection}`}>
-          {CONNECTION_LABELS[live.connection]}
-        </span>
-        <span className={`live-pill live-pill--session-${live.sessionStatus}`}>
-          {SESSION_LABELS[live.sessionStatus]}
-        </span>
-        {live.session && (
-          <span className="live-runid">{shortRunId(live.session.runId)}</span>
-        )}
+      <div className="live-console-head">
+        <div className="live-console-title">
+          <strong>Worker frame intake</strong>
+          <span>Validated, authoritative data from the running session</span>
+        </div>
+        <div className="live-statusbar" role="status" aria-live="polite">
+          <span className={`live-pill live-pill--${live.connection}`}>
+            {CONNECTION_LABELS[live.connection]}
+          </span>
+          <span className={`live-pill live-pill--session-${live.sessionStatus}`}>
+            {SESSION_LABELS[live.sessionStatus]}
+          </span>
+        </div>
+        <dl className="live-console-meta">
+          <div>
+            <dt>Stream endpoint</dt>
+            <dd>{streamUrl}</dd>
+          </div>
+          <div>
+            <dt>Session / run</dt>
+            <dd>{live.session ? shortRunId(live.session.runId) : "Awaiting session header"}</dd>
+          </div>
+          <div>
+            <dt>Sequence cursor</dt>
+            <dd>{live.seqCursor >= 0 ? live.seqCursor : "—"}</dd>
+          </div>
+          <div>
+            <dt>Last worker frame</dt>
+            <dd>{formatLastFrame(live.lastFrameAtMs)}</dd>
+          </div>
+        </dl>
+        <p className="live-console-proof">
+          <span aria-hidden="true" /> Live data path · worker frames only · no simulated browser activity
+        </p>
       </div>
 
       {/* A connected-but-idle room still pushes zeroed totals; only a real
@@ -94,6 +119,14 @@ export function LivePoc({ url }: { url?: string }) {
       )}
     </div>
   );
+}
+
+function formatLastFrame(timestamp: number | null): string {
+  if (timestamp === null) return "No frame received";
+  const ageMs = Math.max(0, Date.now() - timestamp);
+  if (ageMs < 1_000) return "<1s ago";
+  if (ageMs < 60_000) return `${Math.floor(ageMs / 1_000)}s ago`;
+  return `${Math.floor(ageMs / 60_000)}m ago`;
 }
 
 function shortRunId(runId: string): string {
