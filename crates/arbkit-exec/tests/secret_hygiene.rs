@@ -3,9 +3,9 @@
 
 // The adapter-redaction test needs the live feature; everything else holds
 // on a default-feature build too.
+use arbkit_exec::SecretScan;
 #[cfg(feature = "live")]
 use arbkit_exec::{KalshiConfig, PolymarketConfig};
-use arbkit_exec::SecretScan;
 
 const KALSHI_KEY_ID: &str = "kalshi-live-key-id-0042";
 const POLY_L1: &str = "0xdeadbeef1234567890abcdefdeadbeef567890ab";
