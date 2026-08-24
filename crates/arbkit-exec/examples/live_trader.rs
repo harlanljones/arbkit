@@ -1,14 +1,13 @@
-//! Minimal live-trader entry point.
-//!
-//! The binary intentionally starts in dry-run/kill-switch mode. Feed and
-//! catalog wiring can be supplied by the host application, while this command
-//! validates the execution policy before any adapter is constructed.
+//! End-to-end dry-run execution entry point.
 
+use arbkit_core::Prob;
+use arbkit_exec::{
+    DryRunAdapter, ExecLeg, ExecMode, HedgedExecutor, RiskConfig, RiskGate, VenueInstrumentRef,
+};
 use std::env;
 
-use arbkit_exec::{ExecMode, RiskConfig};
-
-fn main() {
+#[tokio::main]
+async fn main() {
     let mode = env::args()
         .skip(1)
         .find_map(|arg| arg.strip_prefix("--mode=").map(str::to_owned))
@@ -36,7 +35,38 @@ fn main() {
         eprintln!("live mode refused: ARBKIT_KILL_SWITCH is active");
         std::process::exit(3);
     }
-    println!(
-        "execution policy validated; no feed or order adapter is active in this standalone command"
-    );
+    if matches!(mode, ExecMode::DryRun) {
+        let mut risk = RiskGate::new(
+            RiskConfig {
+                kill_switch: false,
+                ..config
+            },
+            [(1, 10_000), (2, 10_000)],
+        );
+        let legs = [
+            ExecLeg {
+                venue: 1,
+                instrument: VenueInstrumentRef::Kalshi("DRY-RUN-A".into()),
+                limit_price: Prob::from_cents(49).unwrap(),
+                stake_cents: 100,
+                client_order_id: [1; 16],
+            },
+            ExecLeg {
+                venue: 2,
+                instrument: VenueInstrumentRef::Kalshi("DRY-RUN-B".into()),
+                limit_price: Prob::from_cents(49).unwrap(),
+                stake_cents: 100,
+                client_order_id: [2; 16],
+            },
+        ];
+        let mut executor = HedgedExecutor { risk: &mut risk };
+        let report = executor
+            .execute(100, &legs, &DryRunAdapter, &DryRunAdapter)
+            .expect("dry-run execution");
+        println!(
+            "dry-run session complete classification={:?} filled_stake_cents={}",
+            report.classification, report.filled_stake_cents
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
 }

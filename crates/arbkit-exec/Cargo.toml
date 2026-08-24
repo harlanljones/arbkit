@@ -9,15 +9,23 @@ description = "Explicitly gated live and dry-run execution for arbkit"
 
 [features]
 default = []
-live = ["dep:reqwest"]
+live = ["dep:reqwest", "dep:rsa", "dep:sha2", "dep:base64", "dep:rand", "dep:hmac", "dep:k256"]
 
 [dependencies]
 arbkit-core = { path = "../arbkit-core" }
 arbkit-match = { path = "../arbkit-match" }
-serde = { workspace = true }
+arbkit-engine = { path = "../arbkit-engine" }
+serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
+rsa = { version = "0.9", features = ["pem", "sha2"], optional = true }
+sha2 = { version = "0.10", optional = true }
+base64 = { version = "0.22", optional = true }
+rand = { version = "0.8", optional = true }
+hmac = { version = "0.12", optional = true }
+k256 = { version = "0.13", features = ["ecdsa", "sha256"], optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

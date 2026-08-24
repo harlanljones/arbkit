@@ -19,8 +19,107 @@ use thiserror::Error;
 pub mod proof;
 pub use proof::{compare_tape, LiveProofReport, TapeComparison};
 
+#[cfg(feature = "live")]
+pub mod kalshi;
+#[cfg(feature = "live")]
+pub use kalshi::{KalshiConfig, KalshiError, KalshiExecutionAdapter, OrderStatus};
+#[cfg(feature = "live")]
+pub mod polymarket;
+#[cfg(feature = "live")]
+pub use polymarket::{
+    PolymarketConfig, PolymarketError, PolymarketExecutionAdapter, PolymarketOrderStatus,
+    TimeInForce,
+};
+
+pub mod state;
+pub use state::{
+    DurableRiskState, FeedCircuitBreaker, FillEvent, InFlightOrder, PersistedExecLeg, RateLimiter,
+    ReconciliationLedger, RiskStateStore,
+};
+
+/// Cancel every known accepted order during an emergency flatten operation.
+pub fn emergency_flatten<A: VenueAdapter>(
+    adapter: &A,
+    orders: &[OrderResult],
+) -> Result<usize, ExecError> {
+    let mut flattened = 0;
+    for order in orders {
+        adapter
+            .unwind(order)
+            .map_err(|message| ExecError::Unwind { venue: 0, message })?;
+        flattened += 1;
+    }
+    Ok(flattened)
+}
+
+/// Resolves a signal plan's venue/outcome pair into an execution instrument.
+pub trait InstrumentResolver {
+    /// Return the venue-specific instrument for one planned leg.
+    fn resolve(
+        &self,
+        venue: VenueId,
+        outcome: arbkit_core::OutcomeId,
+    ) -> Option<VenueInstrumentRef>;
+}
+
+/// Convert an engine signal into executable legs after it leaves the hot loop.
+pub fn exec_legs_from_signal(
+    signal: &arbkit_engine::SignalEvent,
+    resolver: &impl InstrumentResolver,
+) -> Vec<ExecLeg> {
+    signal.plan[..signal.plan_len as usize]
+        .iter()
+        .filter_map(|leg| {
+            resolver
+                .resolve(leg.venue, leg.outcome)
+                .map(|instrument| ExecLeg {
+                    venue: leg.venue,
+                    instrument,
+                    limit_price: leg.quoted,
+                    stake_cents: leg.capacity,
+                    client_order_id: client_order_id(signal.market_id, leg.venue, leg.outcome),
+                })
+        })
+        .collect()
+}
+
+fn client_order_id(market: u32, venue: VenueId, outcome: arbkit_core::OutcomeId) -> [u8; 16] {
+    let mut id = [0; 16];
+    id[..4].copy_from_slice(&market.to_le_bytes());
+    id[4..6].copy_from_slice(&venue.to_le_bytes());
+    id[6..10].copy_from_slice(&outcome.to_le_bytes());
+    id
+}
+
+/// Post-engine opportunity deduplicator; safe to allocate outside the hot loop.
+#[derive(Debug, Default)]
+pub struct OpportunityDeduper {
+    seen: std::collections::HashSet<[u8; 16]>,
+}
+
+impl OpportunityDeduper {
+    /// Return true only for the first occurrence of an unchanged signal plan.
+    pub fn accept(&mut self, signal: &arbkit_engine::SignalEvent) -> bool {
+        let mut key = client_order_id(
+            signal.market_id,
+            signal.plan_len as u16,
+            signal.signal.profit_bps,
+        );
+        for leg in signal.plan.iter().take(signal.plan_len as usize) {
+            key[0] ^= leg.venue as u8;
+            key[1] ^= leg.outcome as u8;
+            key[2] ^= leg.quoted.ppm() as u8;
+        }
+        self.seen.insert(key)
+    }
+    /// Clear deduplication state at a catalog/session boundary.
+    pub fn clear(&mut self) {
+        self.seen.clear();
+    }
+}
+
 /// An instrument identifier suitable for an order request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VenueInstrumentRef {
     /// Kalshi market ticker.
     Kalshi(String),
@@ -53,7 +152,7 @@ pub enum ExecMode {
 }
 
 /// Conservative limits applied before any order is submitted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RiskConfig {
     /// Maximum stake for a single leg.
     pub max_stake_per_leg_cents: Cents,
@@ -175,6 +274,21 @@ impl RiskGate {
         }
     }
 
+    /// Restore a gate from durable fields without releasing reservations.
+    pub fn from_durable(
+        config: RiskConfig,
+        daily_loss_cents: Cents,
+        open_trades: u32,
+        balances: impl IntoIterator<Item = (VenueId, Cents)>,
+    ) -> Self {
+        Self {
+            config,
+            daily_loss_cents,
+            open_trades,
+            bankroll: balances.into_iter().collect(),
+        }
+    }
+
     /// Validate and reserve all legs before submission.
     pub fn preflight(&mut self, edge_bps: u32, legs: &[ExecLeg]) -> Result<(), RiskRejection> {
         if self.config.kill_switch {
@@ -225,6 +339,11 @@ impl RiskGate {
             self.daily_loss_cents = self.daily_loss_cents.saturating_add(-realized_profit_cents);
         }
         self.open_trades = self.open_trades.saturating_sub(1);
+    }
+
+    /// Snapshot per-venue available capital for durable state.
+    pub fn bankroll_snapshot(&self) -> HashMap<VenueId, Cents> {
+        self.bankroll.clone()
     }
 }
 
