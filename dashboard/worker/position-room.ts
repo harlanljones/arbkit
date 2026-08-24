@@ -64,6 +64,7 @@ export class PositionRoom {
 
     const now = Date.now();
     let relayItems: unknown[] | null = null;
+    let sessionStarted = false;
     const lines = text.split("\n").filter((line) => line.trim().length > 0);
 
     for (let index = 0; index < lines.length; index += 1) {
@@ -87,12 +88,19 @@ export class PositionRoom {
         );
       }
       this.session.apply(frame.data, now);
+      if (frame.data.t === "session-start") sessionStarted = true;
       if (frame.data.t === "positions") relayItems = frame.data.items;
     }
 
-    // New rows first, then the totals they produced — a client applying both
-    // in order always lands on the authoritative state.
-    if (relayItems !== null) {
+    // A viewer may already be connected to the idle room when a runner
+    // starts. Totals and positions do not carry the session header, so send a
+    // full authoritative snapshot at the session boundary or the browser can
+    // show a live cursor while still saying "awaiting session header".
+    if (sessionStarted) {
+      this.broadcast(snapshotFrame(this.session, -1));
+    } else if (relayItems !== null) {
+      // New rows first, then the totals they produced — a client applying
+      // both in order always lands on the authoritative state.
       this.broadcast({ t: "positions", items: relayItems });
     }
     this.broadcast(totalsFrame(this.session));
