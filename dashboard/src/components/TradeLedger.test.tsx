@@ -194,6 +194,10 @@ describe("TradeLedger summary and table", () => {
     const table = document.querySelector("table.trade-table") as HTMLElement;
     expect(table.querySelector('[data-group-size="2"]')).toBeInTheDocument();
     expect(table).toHaveTextContent("0–2");
+    expect(table).toHaveTextContent("$200.00");
+    expect(table).toHaveTextContent("$6.00");
+    expect(table).toHaveTextContent("$5.00");
+    expect(table).toHaveTextContent("avg");
     const groupToggle = screen.getByRole("button", { name: "×2 trades" });
     expect(groupToggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(groupToggle);

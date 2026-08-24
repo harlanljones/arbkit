@@ -1353,6 +1353,17 @@ footer a {
   color: var(--ink);
 }
 
+.trade-aggregate-note {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .trade-group-row td {
   white-space: normal;
   background: var(--paper-deep);

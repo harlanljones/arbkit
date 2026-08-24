@@ -297,7 +297,17 @@ function TradeRow({ group }: { group: TradeGroup }) {
   const [expanded, setExpanded] = useState(false);
   const [groupExpanded, setGroupExpanded] = useState(false);
   const { representative: record } = group;
-  const delta = record.realizedProfitCents - record.expectedProfitCents;
+  const totals = group.records.reduce(
+    (summary, item) => ({
+      edgeBps: summary.edgeBps + item.edgeBps,
+      requestedStakeCents: summary.requestedStakeCents + item.requestedStakeCents,
+      expectedProfitCents: summary.expectedProfitCents + item.expectedProfitCents,
+      realizedProfitCents: summary.realizedProfitCents + item.realizedProfitCents,
+    }),
+    { edgeBps: 0, requestedStakeCents: 0, expectedProfitCents: 0, realizedProfitCents: 0 },
+  );
+  const averageEdgeBps = Math.floor(totals.edgeBps / group.records.length);
+  const delta = totals.realizedProfitCents - totals.expectedProfitCents;
   const sequenceNumbers = group.records.map((item) => item.seq);
   const sequenceLabel = group.records.length === 1
     ? String(record.seq)
@@ -306,7 +316,7 @@ function TradeRow({ group }: { group: TradeGroup }) {
   return (
     <>
       <tr
-        className={record.realizedProfitCents > 0 ? undefined : "is-loss"}
+        className={totals.realizedProfitCents > 0 ? undefined : "is-loss"}
         data-group-size={group.records.length}
       >
         <th scope="row">
@@ -324,10 +334,13 @@ function TradeRow({ group }: { group: TradeGroup }) {
           )}
         </th>
         <td>{record.marketLabel}</td>
-        <td>{record.edgeBps} bps</td>
-        <td>{money(record.requestedStakeCents)}</td>
-        <td>{money(record.expectedProfitCents)}</td>
-        <td>{money(record.realizedProfitCents)}</td>
+        <td>
+          {averageEdgeBps} bps
+          {group.records.length > 1 && <small className="trade-aggregate-note">avg</small>}
+        </td>
+        <td>{money(totals.requestedStakeCents)}</td>
+        <td>{money(totals.expectedProfitCents)}</td>
+        <td>{money(totals.realizedProfitCents)}</td>
         <td>{delta >= 0 ? "+" : ""}{money(delta).replace("$-", "-$")}</td>
         <td>
           <span className={`trade-badge trade-badge--${record.classification}`} data-classification={record.classification}>
