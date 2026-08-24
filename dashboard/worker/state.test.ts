@@ -80,6 +80,25 @@ describe("PositionSession totals", () => {
     expect(totals.roiRealizedBps).toBe(Math.floor((4_979 * 10_000) / 285_389));
   });
 
+  it("does not count an at-least-once ingest retry twice", () => {
+    const session = new PositionSession();
+    session.apply(sessionStart(), 10);
+    const batch = positions([
+      record(0, { requestedStakeCents: 90_000 }),
+      record(1, { requestedStakeCents: 95_000 }),
+    ]);
+
+    session.apply(batch, 11);
+    session.apply(batch, 12);
+
+    expect(session.totals()).toMatchObject({
+      trades: 2,
+      stakedCents: 185_000,
+      realizedProfitCents: 4_000,
+    });
+    expect(session.recordsAfter(-1).map((item) => item.seq)).toEqual([0, 1]);
+  });
+
   it("floors negative ROI toward negative infinity", () => {
     const session = new PositionSession();
     session.apply(sessionStart(), 10);

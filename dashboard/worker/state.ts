@@ -120,7 +120,18 @@ export class PositionSession {
         break;
       }
       case "positions": {
+        // Ingest retries are at-least-once: a request may have reached the
+        // Durable Object even when the runner did not receive its response.
+        // Runner sequence numbers are monotonic within a session, so rows at
+        // or below the cursor are already accounted for.
+        const fresh: TradeRecord[] = [];
+        let nextSeq = this.seqCursor;
         for (const record of frame.items) {
+          if (record.seq <= nextSeq) continue;
+          fresh.push(record);
+          nextSeq = record.seq;
+        }
+        for (const record of fresh) {
           this.trades += 1;
           this.stakedCents += record.requestedStakeCents;
           this.theoreticalProfitCents += record.worstCaseProfitCents;
@@ -130,7 +141,7 @@ export class PositionSession {
           this.funnelCounts[record.classification] += 1;
           this.seqCursor = Math.max(this.seqCursor, record.seq);
         }
-        this.pushRing(frame.items);
+        this.pushRing(fresh);
         break;
       }
       case "stats": {
