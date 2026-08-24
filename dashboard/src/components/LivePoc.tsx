@@ -297,7 +297,7 @@ function RecentTable({
               <th scope="col">Market</th>
               <th scope="col">Edge</th>
               <th scope="col">Stake</th>
-              <th scope="col">Worst case</th>
+              <th scope="col">Theoretical</th>
               <th scope="col">Realized</th>
               <th scope="col">Class</th>
             </tr>

@@ -144,6 +144,8 @@ describe("LivePoc", () => {
     expect(screen.getByText("3.06% · worst case at lock")).toBeInTheDocument();
     expect(screen.getByText("Attempted 103")).toBeInTheDocument();
     expect(screen.getByText("76 trades · 3 windows")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Theoretical" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Worst case" })).toBeNull();
 
     // A live position push lands as its own ledger row on the next tick.
     socket.message({

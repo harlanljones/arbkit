@@ -102,6 +102,16 @@ struct SeqCounters {
     poly_lal: u64,
 }
 
+/// Returns whether two engine emissions describe the same unchanged
+/// opportunity. Feed updates can repeatedly re-evaluate a stable book; the
+/// live ledger should record a new trade only when the opportunity changes.
+fn same_opportunity(left: &SignalEvent, right: &SignalEvent) -> bool {
+    left.market_id == right.market_id
+        && left.signal == right.signal
+        && left.plan_len == right.plan_len
+        && left.plan[..left.plan_len as usize] == right.plan[..right.plan_len as usize]
+}
+
 impl SeqCounters {
     fn bump(&mut self, is_kalshi: bool, is_bos: bool) -> u64 {
         match (is_kalshi, is_bos) {
@@ -616,6 +626,7 @@ fn main() {
     };
     let mut collected: Vec<SignalEvent> = Vec::with_capacity(256);
     let mut seen_signals = 0usize;
+    let mut last_emitted_signal: Option<SignalEvent> = None;
     let mut seq_cursor = 0u64;
     let mut windows_completed = 0usize;
     let window_duration = Duration::from_millis(args.window_ms);
@@ -655,6 +666,13 @@ fn main() {
         // after, so a streamed trade's numbers equal a recorded trade's.
         let mut items: Vec<TradeRecord> = Vec::with_capacity(collected.len());
         for signal_event in collected.drain(..) {
+            if last_emitted_signal
+                .as_ref()
+                .is_some_and(|previous| same_opportunity(previous, &signal_event))
+            {
+                continue;
+            }
+            last_emitted_signal = Some(signal_event);
             seen_signals += 1;
             let plan_len = signal_event.plan_len as usize;
             let legs = &signal_event.plan[..plan_len];
