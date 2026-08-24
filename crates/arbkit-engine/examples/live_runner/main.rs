@@ -15,7 +15,7 @@
 //! ```text
 //! cargo run --example live_runner -- \
 //!     --url http://127.0.0.1:8787/api/live/ingest \
-//!     [--token-env ARBLIVE_TOKEN] [--ticks-per-window 200] [--window-ms 1000]
+//!     [--token-env VAR] [--ticks-per-window 200] [--window-ms 1000]
 //!     [--bankroll <cents>] [--windows <n>]
 //! ```
 //!
@@ -332,7 +332,12 @@ const USAGE: &str = "Usage: live_runner [--url <ingest-url>] [--token-env <VAR>]
 fn parse_args() -> RunnerArgs {
     let mut args = RunnerArgs {
         url: String::from("http://127.0.0.1:8787/api/live/ingest"),
-        token: env::var("ARBLIVE_TOKEN").unwrap_or_default(),
+        // Default token source mirrors the dashboard's `.dev.vars`, so
+        // `set -a; source dashboard/.dev.vars; set +a` is all the wiring a
+        // local session needs. ARBLIVE_TOKEN stays as a fallback alias.
+        token: env::var("LIVE_INGEST_TOKEN")
+            .or_else(|_| env::var("ARBLIVE_TOKEN"))
+            .unwrap_or_default(),
         ticks_per_window: 200,
         window_ms: 1_000,
         bankroll_cents: 0,
@@ -391,7 +396,7 @@ fn parse_args() -> RunnerArgs {
         }
     }
     if args.token.is_empty() && !args.url.starts_with("http://127.0.0.1") {
-        eprintln!("warning: no ARBLIVE_TOKEN set; the production ingest will reject this");
+        eprintln!("warning: no LIVE_INGEST_TOKEN / ARBLIVE_TOKEN set; the ingest will be rejected");
     }
     args
 }

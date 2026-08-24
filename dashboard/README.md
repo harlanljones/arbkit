@@ -77,9 +77,11 @@ Object, which owns all session arithmetic (totals, ROI bps floored toward
 negative infinity, disposition funnel) and pushes authoritative frames to any
 number of read-only WebSocket viewers.
 
-- **Producer:** `cargo run -p arbkit-engine --example live_runner -- --url <ingest-url> --token-env ARBLIVE_TOKEN`
+- **Producer:** `cargo run -p arbkit-engine --example live_runner -- --url <ingest-url>`
   streams detected-and-settled positions from the pipeline workload in fixed
-  wall-clock windows (see the example's docs for flags).
+  wall-clock windows (see the example's docs for flags). The token comes from
+  `LIVE_INGEST_TOKEN` in the environment — `set -a; source .dev.vars; set +a`
+  is enough locally (`--token-env VAR` names any other variable).
 - **Ingest auth:** `LIVE_INGEST_TOKEN` — set locally via `.dev.vars`
   (see [`.dev.vars.example`](.dev.vars.example)), in production via
   `wrangler secret put LIVE_INGEST_TOKEN`.
