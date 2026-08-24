@@ -207,6 +207,10 @@ For comprehensive charts, methodology, and tables, see [`RESULTS.md`](RESULTS.md
 
 The public dashboard at **[arbkit.harlanljones.com](https://arbkit.harlanljones.com/)** turns the dated benchmark snapshots into an inspectable proof ledger: latency against budget, throughput by host, signal disposition, paper-trading accounting, and the workspace verification matrix.
 
+The same worker hosts the live proof stream: the `live_runner` example pushes validated frames to a Durable Object that owns all session arithmetic, and the page renders the authoritative integers — KPIs, disposition funnel, ROI sparkline, recent ledger — plus an operator console (kill switch, session controls, risk envelope, open positions, fill reconciliation) that fails inert whenever the stream is down.
+
+![Live proof stream with the operator console](docs/screenshots/live-stream-overview.png)
+
 Run it locally:
 
 ```bash
@@ -231,7 +235,7 @@ The dashboard builds to static assets for the canonical `arbkit` Cloudflare Work
 - **Rounding always favours the pessimistic reading:** Payouts floor, effective prices ceil, stakes round down. Every number reported should be one you can beat, not one you have to hit.
 - **No arbitrage is not an error:** `detect` returns `Ok(None)` for every unviable market condition — no edge, no depth, an edge that stake rounding ate. Errors are reserved for malformed input.
 - **Staleness is a state:** Exchange feeds are a snapshot plus sequenced deltas. A skipped sequence number means the local book is wrong and cannot be repaired by interpolation, so it goes out of service until a fresh snapshot arrives. A gap degrades into silence rather than into confidently wrong signals.
-- **Live trading is opt-in:** `arbkit-feed` exposes feature-gated WebSocket connectors and `arbkit-exec` owns risk-gated adapters. The default mode is dry-run and `ARBKIT_KILL_SWITCH=1`; paper and live fills remain explicitly labeled.
+- **Live trading is opt-in:** `arbkit-feed` exposes feature-gated WebSocket connectors and `arbkit-exec` owns risk-gated adapters. The default mode is dry-run and `ARBKIT_KILL_SWITCH=1`; paper and live fills remain explicitly labeled. The dashboard's operator console commands nothing directly — it queues authenticated commands (`LIVE_OPERATOR_TOKEN`, separate from the runner's ingest token) that only the runner's risk gate can apply, and it fails inert when disconnected.
 
 ## License
 

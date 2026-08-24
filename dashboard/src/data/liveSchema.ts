@@ -43,6 +43,31 @@ export const SessionHeaderSchema = z.object({
   windowMs: z.number().int().positive(),
 });
 
+/** The runner's authoritative risk posture. A null cap means the runner
+ * enforces none — displayed as "not enforced", never replaced with a
+ * client-side number. */
+export const RiskStateSchema = z.object({
+  executionMode: z.enum(["paper", "live"]),
+  killSwitch: z.boolean(),
+  maxStakePerLegCents: moneyCents.nullable(),
+  maxDailyLossCents: moneyCents.nullable(),
+  dailyLossUsedCents: moneyCents.nullable(),
+  maxOpenTrades: z.number().int().nullable(),
+  openTrades: z.number().int().nullable(),
+  minEdgeBps: z.number().int().nullable(),
+});
+
+/** One reconciled fill keyed by the execution layer's idempotency key. */
+export const FillRecordSchema = z.object({
+  clientOrderId: z.string().min(1),
+  venueOrderId: z.string().min(1).nullable(),
+  tradeSeq: z.number().int().nullable(),
+  filledStakeCents: z.number().int(),
+  realizedProfitCents: moneyCents.nullable(),
+  settlementStatus: z.enum(["open", "settled", "unwound"]),
+  reconciledAtEpochMs: z.number().int(),
+});
+
 const sessionStatusSchema = z.enum(["idle", "live", "stale", "ended"]);
 
 export const ViewerFrameSchema = z.discriminatedUnion("t", [
@@ -54,6 +79,8 @@ export const ViewerFrameSchema = z.discriminatedUnion("t", [
     t: z.literal("snapshot"),
     status: sessionStatusSchema,
     session: SessionHeaderSchema.nullable(),
+    risk: RiskStateSchema.nullable(),
+    fills: z.array(FillRecordSchema),
     totals: TotalsSchema,
     funnel: FunnelSchema,
     capital: CapitalSchema,
@@ -68,11 +95,20 @@ export const ViewerFrameSchema = z.discriminatedUnion("t", [
   z.object({
     t: z.literal("totals"),
     status: sessionStatusSchema,
+    risk: RiskStateSchema.nullable(),
     totals: TotalsSchema,
     funnel: FunnelSchema,
     capital: CapitalSchema,
     windowsCompleted: z.number().int(),
     seqCursor: z.number().int(),
+  }),
+  z.object({
+    t: z.literal("risk"),
+    state: RiskStateSchema,
+  }),
+  z.object({
+    t: z.literal("fills"),
+    items: z.array(FillRecordSchema),
   }),
 ]);
 
@@ -80,4 +116,6 @@ export type Totals = z.infer<typeof TotalsSchema>;
 export type Funnel = z.infer<typeof FunnelSchema>;
 export type Capital = z.infer<typeof CapitalSchema>;
 export type SessionHeader = z.infer<typeof SessionHeaderSchema>;
+export type RiskState = z.infer<typeof RiskStateSchema>;
+export type FillRecord = z.infer<typeof FillRecordSchema>;
 export type ViewerFrame = z.infer<typeof ViewerFrameSchema>;

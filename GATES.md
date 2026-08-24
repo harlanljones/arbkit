@@ -81,3 +81,48 @@
   - CHECK: `npm --prefix dashboard test -- --run && npm --prefix dashboard run typecheck:worker && npm --prefix dashboard run build`
   - EXPECT: `Tests 9 files / 75 passed`; typecheck and build clean
   - EVIDENCE: alarm lifecycle (arm, keep-earlier, stale-once, die-out, re-arm on resume) plus stats-frame surfacing of cursor/windows/capital/funnel all pinned; full suite, worker typecheck, and production build pass.
+
+## HJ-64 testnet integration and failure-drill gates
+
+- [x] HJ64-G1: Kalshi demo and Polymarket sandbox presets exist as configuration without network claims.
+  - CHECK: `cargo test -p arbkit-exec --all-features --test failure_drills demo_and_sandbox`
+  - EXPECT: `test result: ok`
+  - EVIDENCE: `KalshiConfig::demo` targets `demo-api.kalshi.co`, `PolymarketConfig::sandbox` targets the staging CLOB; constructing either performs no I/O.
+- [x] HJ64-G2: The ten failure drills pass against scripted local venues over the real signed adapters.
+  - CHECK: `cargo test -p arbkit-exec --all-features --test failure_drills`
+  - EXPECT: `test result: ok. 11 passed`
+  - EVIDENCE: full fill holds reserve; rejection unwinds and releases; partial fill is a phantom; failed unwind conservatively holds capital; timeout fails one leg and unwinds the other; duplicate retry settles once by client id; stale feed blocks then recovers on observe; restart restores gate/bankroll from disk and reconciles settlement by client id with idempotent acknowledgement; kill switch refuses with zero venue traffic; balance mismatch aborts before any order POST.
+- [x] HJ64-G3: Checkpointing can no longer erase crash-recovery state.
+  - CHECK: `cargo test -p arbkit-exec --all-features restart` (drill) plus `state` unit tests
+  - EXPECT: `test result: ok`
+  - EVIDENCE: `RiskStateStore::checkpoint` merges live risk fields over stored state while preserving `in_flight`; `ReconciliationLedger::apply_fill` now dedupes replayed fill events so at-least-once delivery cannot double-count fees or profit (unit-pinned).
+- [x] HJ64-G4: Adapters fail fast instead of stalling the runner.
+  - CHECK: `cargo test -p arbkit-exec --all-features timeout` drill
+  - EXPECT: `test result: ok`
+  - EVIDENCE: both adapters gained a configurable per-request deadline (`request_timeout`, default 5 s); a stalled venue degrades to a phantom hedge whose accepted leg is unwound.
+- [x] HJ64-G5: Workspace regressions and formatting hold with all features enabled.
+  - CHECK: `cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features`
+  - EXPECT: clean
+  - EVIDENCE: fmt check passed; clippy clean across the workspace; every workspace test binary reported ok including 14 arbkit-exec unit tests and 11 drills; `live_trader` dry-run smoke still completes with LiveFill.
+
+## HJ-65 same-tape proof and readiness review gates
+
+- [x] HJ65-G1: Occurrence tapes replay through the paper simulator into a comparable proof report.
+  - CHECK: `cargo test -p arbkit-exec --features paper-replay --test same_tape_proof`
+  - EXPECT: `test result: ok. 5 passed`
+  - EVIDENCE: parity tape (arrivals = quotes) reduces to 3 fills / 0 phantoms / 30c realized on 570c staked (526 bps floored); malformed tapes rejected with named errors.
+- [x] HJ65-G2: Paper-vs-live comparison is integer-exact and falsification is machine-readable.
+  - CHECK: `same_tape_proof` example with `--compare` against agreeing and divergent artifacts
+  - EXPECT: exit 0 inside tolerance; exit 1 with `"within_tolerance":false` when falsified
+  - EVIDENCE: fee-drag artifact compared at −18 bps → within 50 bps band, exit 0; fabricated-book artifact diverged −5,790 bps → falsified, exit 1. Negative ROI reported as a finding, never relabeled.
+- [x] HJ65-G3: Broken-leg replay semantics are pinned so artifacts are read honestly.
+  - CHECK: `cargo test -p arbkit-exec --features paper-replay --test same_tape_proof moved_price`
+  - EXPECT: `test result: ok`
+  - EVIDENCE: a repriced arrival on one leg fills the other leg alone — one phantom of the broken-leg kind carrying the full directional loss (−100c), not a clean partial fill; vanished quotes behave identically.
+- [x] HJ65-G4: Dry-run warmup, micro-live acceptance criteria, and the pre-capital readiness checklist are documented.
+  - CHECK: `LIVE_TRADING.md` § Same-tape proof procedure / Acceptance criteria / Production readiness review
+  - EVIDENCE: procedure with exact commands and exit-code contract; warmup requires zero unwind failures plus green drills plus reconciled in-flight state; micro-live caps stakes/budget and mandates per-session comparisons; checklist covers credentials, kill-switch posture, catalog gate, persisted risk limits, timeouts, runbook coverage, and dated falsification records.
+- [x] HJ65-G5: Workspace regressions hold with the new feature enabled and disabled.
+  - CHECK: `cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features`
+  - EXPECT: clean
+  - EVIDENCE: all 22 workspace test binaries ok (including the new `same_tape_proof` suite); `cargo check -p arbkit-exec` with default features confirms the replay surface stays out of default builds; RESULTS.md §8 records this host's dated proof-harness measurements.

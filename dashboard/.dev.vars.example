@@ -1,3 +1,8 @@
-# Copy to `.dev.vars` (gitignored) so `wrangler dev` authenticates ingest.
-# In production set the same secret with: `wrangler secret put LIVE_INGEST_TOKEN`
+# Copy to `.dev.vars` (gitignored) so `wrangler dev` authenticates the live
+# surfaces. In production set the same secrets with:
+#   wrangler secret put LIVE_INGEST_TOKEN
+#   wrangler secret put LIVE_OPERATOR_TOKEN
 LIVE_INGEST_TOKEN=change-me
+# Operator console command path. Distinct from the ingest token on purpose:
+# holding the runner's push credential must not confer the right to command.
+LIVE_OPERATOR_TOKEN=change-me-too

@@ -25,6 +25,8 @@ import {
 import { money, percent } from "../data/metrics";
 import type { TradeRecord } from "../data/schema";
 import { useLiveSession } from "../data/useLiveSession";
+import { useOperator } from "../data/useOperator";
+import { OperatorConsole } from "./OperatorConsole";
 
 const GREEN = "#2f6d43";
 const COPPER = "#9a4d2f";
@@ -54,6 +56,7 @@ function defaultLiveUrl(): string {
 export function LivePoc({ url }: { url?: string }) {
   const streamUrl = url ?? defaultLiveUrl();
   const live = useLiveSession(streamUrl);
+  const operator = useOperator();
 
   const recentRows = useMemo(
     () => live.items.slice(-VISIBLE_ROWS).reverse(),
@@ -100,7 +103,11 @@ export function LivePoc({ url }: { url?: string }) {
       </div>
 
       {/* A connected-but-idle room still pushes zeroed totals; only a real
-          session header earns the numbers grid. */}
+          session header earns the numbers grid. The operator console is the
+          one surface that renders even while idle: posture is always worth
+          showing, and it fails inert without a connection. */}
+      <OperatorConsole live={live} operator={operator} />
+
       {live.session === null || live.totals === null ? (
         <IdleNotice connecting={live.connection !== "open"} />
       ) : (

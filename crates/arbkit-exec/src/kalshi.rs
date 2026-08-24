@@ -25,6 +25,9 @@ pub struct KalshiConfig {
     pub base_url: String,
     /// Optional clock source override, useful for deterministic tests.
     pub timestamp_ms: Option<u64>,
+    /// Per-request deadline; a venue that cannot answer inside it fails the
+    /// hedge leg like any other rejection instead of stalling the runner.
+    pub request_timeout: Option<std::time::Duration>,
 }
 
 impl std::fmt::Debug for KalshiConfig {
@@ -34,6 +37,7 @@ impl std::fmt::Debug for KalshiConfig {
             .field("private_key_pem", &"[redacted]")
             .field("base_url", &self.base_url)
             .field("timestamp_ms", &self.timestamp_ms)
+            .field("request_timeout", &self.request_timeout)
             .finish()
     }
 }
@@ -45,6 +49,20 @@ impl Default for KalshiConfig {
             private_key_pem: String::new(),
             base_url: "https://api.elections.kalshi.com".into(),
             timestamp_ms: None,
+            request_timeout: Some(std::time::Duration::from_secs(5)),
+        }
+    }
+}
+
+impl KalshiConfig {
+    /// Configuration preset targeting Kalshi's demo environment. The URL can
+    /// be overridden afterwards; no network claim is made by constructing it.
+    pub fn demo(api_key: String, private_key_pem: String) -> Self {
+        Self {
+            api_key,
+            private_key_pem,
+            base_url: "https://demo-api.kalshi.co".into(),
+            ..Self::default()
         }
     }
 }
@@ -99,7 +117,11 @@ impl KalshiExecutionAdapter {
         }
         let key = RsaPrivateKey::from_pkcs8_pem(&config.private_key_pem)
             .map_err(|e| KalshiError::Configuration(format!("private key: {e}")))?;
-        let client = Client::builder()
+        let mut builder = Client::builder();
+        if let Some(timeout) = config.request_timeout {
+            builder = builder.timeout(timeout);
+        }
+        let client = builder
             .build()
             .map_err(|e| KalshiError::Transport(e.to_string()))?;
         Ok(Self {
@@ -309,6 +331,7 @@ mod tests {
             private_key_pem: pem,
             base_url: base_url.into(),
             timestamp_ms: Some(1_700_000_000_000),
+            request_timeout: None,
         })
         .unwrap()
     }
@@ -376,12 +399,9 @@ mod tests {
                 let size = stream.read(&mut request).unwrap();
                 let request = String::from_utf8_lossy(&request[..size]).to_string();
                 seen.push(request.clone());
-                let (status, body) = if request.starts_with("POST /trade-api/v2/portfolio/orders") {
-                    (
-                        "200 OK",
-                        r#"{"order":{"order_id":"order-1","filled_count":100,"status":"executed"}}"#,
-                    )
-                } else if request.starts_with("GET /trade-api/v2/portfolio/orders/order-1") {
+                let (status, body) = if request.starts_with("POST /trade-api/v2/portfolio/orders")
+                    || request.starts_with("GET /trade-api/v2/portfolio/orders/order-1")
+                {
                     (
                         "200 OK",
                         r#"{"order":{"order_id":"order-1","filled_count":100,"status":"executed"}}"#,

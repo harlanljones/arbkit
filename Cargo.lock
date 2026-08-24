@@ -32,6 +32,7 @@ dependencies = [
  "arbkit-core",
  "arbkit-engine",
  "arbkit-match",
+ "arbkit-sim",
  "base64",
  "hmac",
  "k256",

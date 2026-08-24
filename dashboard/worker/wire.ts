@@ -14,6 +14,61 @@ export const LIVE_SCHEMA_VERSION = 1 as const;
 
 const moneyCents = z.number().int();
 
+export const executionModeSchema = z.enum(["paper", "live"]);
+
+/** The runner's authoritative risk posture, exactly as its `RiskGate` sees
+ * it. A `null` field means the runner enforces no such cap — the dashboard
+ * must render that honestly, never substitute a client-side default. The
+ * kill switch is the one field that cannot be null: absence of a runner
+ * report defaults to engaged (mirrors `RiskConfig::default().kill_switch`). */
+export const riskStateSchema = z.object({
+  executionMode: executionModeSchema,
+  killSwitch: z.boolean(),
+  maxStakePerLegCents: moneyCents.nullable(),
+  maxDailyLossCents: moneyCents.nullable(),
+  dailyLossUsedCents: moneyCents.nullable(),
+  maxOpenTrades: z.number().int().nullable(),
+  openTrades: z.number().int().nullable(),
+  minEdgeBps: z.number().int().nullable(),
+});
+
+export type RiskState = z.infer<typeof riskStateSchema>;
+
+/** One reconciled fill, keyed by the idempotency key the execution layer
+ * already committed before network submission (`client_order_id`), with the
+ * venue's order ID once known. Realized cents ride along only when
+ * settlement has actually reported them. */
+export const fillRecordSchema = z.object({
+  clientOrderId: z.string().min(1),
+  venueOrderId: z.string().min(1).nullable(),
+  tradeSeq: z.number().int().nullable(),
+  filledStakeCents: z.number().int(),
+  realizedProfitCents: moneyCents.nullable(),
+  settlementStatus: z.enum(["open", "settled", "unwound"]),
+  reconciledAtEpochMs: z.number().int(),
+});
+
+export type FillRecord = z.infer<typeof fillRecordSchema>;
+
+/** Operator → runner commands. Every command is validated by this schema at
+ * the worker edge before it can reach the queue; the runner applies each one
+ * through its own `RiskGate` → `HedgedExecutor` seam or refuses it. */
+export const operatorCommandSchema = z.discriminatedUnion("t", [
+  z.object({
+    t: z.literal("session-start"),
+    mode: executionModeSchema,
+  }),
+  z.object({
+    t: z.literal("session-end"),
+  }),
+  z.object({
+    t: z.literal("kill-switch"),
+    engage: z.boolean(),
+  }),
+]);
+
+export type OperatorCommand = z.infer<typeof operatorCommandSchema>;
+
 const legStatusSchema = z.union([
   z.literal("filled"),
   z.object({
@@ -71,6 +126,15 @@ export const runnerFrameSchema = z.discriminatedUnion("t", [
     initialBankrollCents: moneyCents.nullable(),
     ticksPerWindow: z.number().int().positive(),
     windowMs: z.number().int().positive(),
+    executionMode: executionModeSchema.optional(),
+  }),
+  z.object({
+    t: z.literal("risk"),
+    state: riskStateSchema,
+  }),
+  z.object({
+    t: z.literal("fills"),
+    items: z.array(fillRecordSchema).max(256),
   }),
   z.object({
     t: z.literal("positions"),

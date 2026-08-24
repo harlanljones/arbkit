@@ -1626,6 +1626,142 @@ footer a {
   height: 220px;
 }
 
+/* Operator console */
+
+.operator-console {
+  display: grid;
+  gap: 18px;
+  padding: 24px 28px;
+  border-block: 1px solid var(--ink);
+  background: var(--paper-deep);
+}
+
+.operator-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.operator-head strong {
+  margin-right: 8px;
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.live-pill--kill-engaged {
+  color: #9a4d2f;
+  font-weight: 700;
+}
+
+.live-pill--kill-disarmed {
+  color: #2f6d43;
+}
+
+.live-pill--mode {
+  color: var(--muted, #5c5a52);
+}
+
+.operator-note {
+  color: #9a4d2f;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.operator-console .live-console-meta {
+  border-top: 0;
+  grid-template-columns: minmax(0, 1fr) repeat(4, minmax(120px, 0.7fr));
+}
+
+.operator-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 22px;
+}
+
+.operator-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--rule);
+}
+
+.operator-group legend {
+  padding: 0 8px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.operator-group label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+}
+
+.operator-confirm {
+  color: #9a4d2f;
+}
+
+.operator-group button {
+  padding: 8px 14px;
+  border: 1px solid var(--ink);
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+}
+
+.operator-group button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.operator-ack {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted, #5c5a52);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.fill-feed h3 {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fill-feed ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+@media (max-width: 1100px) {
+  .operator-console .live-console-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+
 .live-funnel {
   display: flex;
   flex-wrap: wrap;

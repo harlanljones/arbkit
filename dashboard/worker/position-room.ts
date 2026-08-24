@@ -16,23 +16,39 @@ import {
   snapshotFrame,
   totalsFrame,
 } from "./state";
-import { runnerFrameSchema } from "./wire";
+import { operatorCommandSchema, runnerFrameSchema } from "./wire";
+import type { OperatorCommand } from "./wire";
 
 /** Ingest bodies beyond this are refused before parsing. The runner's own
  * batches are ≤64 records; 512 KiB covers that many rich records with slack. */
 const MAX_INGEST_BYTES = 512 * 1024;
+/** Command bodies are three tiny shapes; anything larger is refused unread. */
+const MAX_COMMAND_BYTES = 4 * 1024;
 /** How far ahead the staleness alarm is scheduled after activity. */
 const STALE_CHECK_MS = 10_000;
+/** Retained operator commands. The runner pulls by id, so a brief offline
+ * window still receives its orders; a long one loses the oldest — an honest
+ * gap, never an unbounded buffer. */
+const COMMAND_QUEUE_CAPACITY = 64;
 
 export interface Env {
   ASSETS: Fetcher;
   POSITION_ROOM: DurableObjectNamespace;
   LIVE_INGEST_TOKEN?: string;
+  LIVE_OPERATOR_TOKEN?: string;
+}
+
+interface QueuedCommand {
+  id: number;
+  receivedAtEpochMs: number;
+  command: OperatorCommand;
 }
 
 export class PositionRoom {
   private readonly viewers = new Set<WebSocket>();
   private readonly session = new PositionSession();
+  private readonly commandQueue: QueuedCommand[] = [];
+  private nextCommandId = 1;
 
   constructor(
     private readonly ctx: DurableObjectState,
@@ -43,7 +59,81 @@ export class PositionRoom {
     const { pathname } = new URL(request.url);
     if (pathname.endsWith("/ingest")) return this.handleIngest(request);
     if (pathname.endsWith("/ws")) return this.handleViewer(request);
+    if (pathname.endsWith("/command")) return this.handleOperatorCommand(request);
+    if (pathname.endsWith("/commands")) return this.handleRunnerCommands(request);
     return new Response("not found", { status: 404 });
+  }
+
+  // -- operator commands ----------------------------------------------------
+
+  /** Accepts one operator command for the queue. Authentication happened at
+   * the worker edge; this is where the body earns its place — schema first,
+   * then queue. The 202 means "queued", never "applied": only the runner's
+   * risk gate can apply a command, and its `risk` frames are how everyone
+   * learns that actually happened. */
+  private async handleOperatorCommand(request: Request): Promise<Response> {
+    if (request.method !== "POST") {
+      return jsonError(405, "method not allowed");
+    }
+    const declared = Number(request.headers.get("content-length") ?? "0");
+    if (declared > MAX_COMMAND_BYTES) {
+      return jsonError(413, "command too large");
+    }
+    let parsed: unknown;
+    let body = "";
+    try {
+      body = await request.text();
+      parsed = JSON.parse(body);
+    } catch {
+      // An oversized-but-unparseable body still reads as too large.
+      if (body.length > MAX_COMMAND_BYTES) {
+        return jsonError(413, "command too large");
+      }
+      return jsonError(400, "command is not valid JSON");
+    }
+    const command = operatorCommandSchema.safeParse(parsed);
+    if (!command.success) {
+      return jsonError(400, "command failed schema validation");
+    }
+    const id = this.nextCommandId;
+    this.nextCommandId += 1;
+    this.commandQueue.push({
+      id,
+      receivedAtEpochMs: Date.now(),
+      command: command.data,
+    });
+    if (this.commandQueue.length > COMMAND_QUEUE_CAPACITY) {
+      this.commandQueue.splice(
+        0,
+        this.commandQueue.length - COMMAND_QUEUE_CAPACITY,
+      );
+    }
+    return Response.json({ queued: id }, { status: 202 });
+  }
+
+  /** The runner's pull endpoint: everything queued after `afterId`, oldest
+   * first, as NDJSON envelopes. Delivery is at-least-once — the runner must
+   * apply each command idempotently and remember its own high-water id. */
+  private handleRunnerCommands(request: Request): Response {
+    if (request.method !== "GET") {
+      return jsonError(405, "method not allowed");
+    }
+    const afterIdRaw = new URL(request.url).searchParams.get("afterId");
+    const afterId = afterIdRaw === null ? 0 : Number(afterIdRaw);
+    if (!Number.isInteger(afterId) || afterId < 0) {
+      return jsonError(400, "afterId must be a non-negative integer");
+    }
+    const pending = this.commandQueue.filter((entry) => entry.id > afterId);
+    if (pending.length === 0) {
+      return new Response(null, { status: 204 });
+    }
+    const body = pending
+      .map((entry) => JSON.stringify({ id: entry.id, command: entry.command }))
+      .join("\n");
+    return new Response(`${body}\n`, {
+      status: 200,
+      headers: { "content-type": "application/x-ndjson" },
+    });
   }
 
   // -- ingest ---------------------------------------------------------------

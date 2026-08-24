@@ -273,3 +273,29 @@ rate field its integer bps/ppm. Nothing is rounded, recomputed, or
 float-formatted between the engine, the JSONL file, and the dashboard.
 Pre-ledger runs (all snapshots before this one) show an honest "no trade log
 recorded for this run" state rather than synthesized rows.
+
+---
+
+## 8. Same-Tape Proof Harness (August 24, 2026)
+
+HJ-65 delivers the same-tape proof protocol as runnable tooling: an
+occurrence tape (one NDJSON record per detected signal, frozen at detection
+time) is replayed through the paper simulator and compared against a live
+session's `LiveProofReport` artifact using integer-bps `compare_tape`.
+
+**Host:** Linux x86_64 (i7-14700K) · **Toolchain:** rustc 1.97.1 ·
+**Command:** `cargo test -p arbkit-exec --features paper-replay --test same_tape_proof`
+
+| Check | Result |
+|---|---:|
+| Parity tape replay (3 occurrences, arrivals = quotes) | 3 fills / 0 phantoms |
+| Paper realized on parity tape | 30c of 570c staked → 526 bps (floored) |
+| Fee-drag comparison (+1c fees) | −18 bps delta → within 50 bps tolerance |
+| Divergent live artifact (fabricated book) | −5,790 bps delta → **falsified**, exit 1 |
+| Moved-price leg (45c → 47c arrival) | phantom (broken leg), −100c directional loss carried at full weight |
+| Malformed tapes (1-leg, bad ppm) | rejected, never guessed |
+
+The falsification row is the point: the harness is built to make paper-vs-live
+divergence loud and machine-readable (`exit 1`, `"within_tolerance":false`),
+so a synthetic assumption that fails against real venue behavior is recorded
+as a dated finding rather than absorbed into a wider tolerance.

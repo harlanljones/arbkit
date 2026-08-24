@@ -11,16 +11,18 @@
 //! a reported ratio rounds down even when negative. Every number the page
 //! shows should be one you can beat, not one you must hit.
 
-import type { RunnerFrame, TradeRecord } from "./wire";
+import type { FillRecord, RunnerFrame, RiskState, TradeRecord } from "./wire";
 
 export { LIVE_SCHEMA_VERSION } from "./wire";
-export type { TradeRecord } from "./wire";
+export type { FillRecord, RiskState, TradeRecord } from "./wire";
 
 /** A session with no heartbeat for this long reads as stale. The runner
  * beats every 5 s, so four missed beats is generous. */
 export const STALE_AFTER_MS = 20_000;
 /** Recent trade rows retained for snapshots and resume-by-seq. */
 export const RING_CAPACITY = 256;
+/** Recent fill-reconciliation events retained for snapshots. */
+export const FILL_RING_CAPACITY = 128;
 
 export type SessionStatus = "idle" | "live" | "stale" | "ended";
 
@@ -87,6 +89,14 @@ export class PositionSession {
   private capital: Capital = { lockedCents: null, availableCents: null };
   private windowsCompleted = 0;
   private seqCursor = -1;
+
+  /** Authoritative risk posture; `null` until a runner's own `risk` frame
+   * replaces it. No default object here on purpose: claiming "paper" or any
+   * cap before a runner has spoken would fabricate authority. Consumers
+   * treat null as kill-switch-engaged and mode unknown. */
+  private risk: RiskState | null = null;
+  /** Newest-at-the-end ring of reconciled fills, deduped by order id. */
+  private fillRing: FillRecord[] = [];
 
   /** Newest-at-the-end ring of recent records. */
   private ring: TradeRecord[] = [];
@@ -159,6 +169,24 @@ export class PositionSession {
         // Heartbeats exist so silence is measurable; nothing else to record.
         break;
       }
+      case "risk": {
+        this.risk = frame.state;
+        break;
+      }
+      case "fills": {
+        for (const fill of frame.items) {
+          const key = `${fill.clientOrderId}:${fill.venueOrderId ?? ""}`;
+          this.fillRing = this.fillRing.filter(
+            (existing) =>
+              `${existing.clientOrderId}:${existing.venueOrderId ?? ""}` !== key,
+          );
+          this.fillRing.push(fill);
+        }
+        if (this.fillRing.length > FILL_RING_CAPACITY) {
+          this.fillRing.splice(0, this.fillRing.length - FILL_RING_CAPACITY);
+        }
+        break;
+      }
       case "session-end": {
         this.status = "ended";
         break;
@@ -204,6 +232,14 @@ export class PositionSession {
     return this.header;
   }
 
+  currentRisk(): Readonly<RiskState> | null {
+    return this.risk;
+  }
+
+  recentFills(): FillRecord[] {
+    return [...this.fillRing];
+  }
+
   windows(): number {
     return this.windowsCompleted;
   }
@@ -241,6 +277,8 @@ export class PositionSession {
     this.capital = { lockedCents: null, availableCents: null };
     this.windowsCompleted = 0;
     this.seqCursor = -1;
+    this.risk = null;
+    this.fillRing = [];
     this.ring = [];
     this.status = "idle";
     this.lastActivityAtMs = 0;
@@ -261,6 +299,8 @@ export function snapshotFrame(session: PositionSession, afterSeq: number) {
     t: "snapshot",
     status: session.getStatus(),
     session: session.currentHeader(),
+    risk: session.currentRisk(),
+    fills: session.recentFills(),
     totals: session.totals(),
     funnel: session.funnel(),
     capital: session.currentCapital(),
@@ -274,6 +314,7 @@ export function totalsFrame(session: PositionSession) {
   return {
     t: "totals",
     status: session.getStatus(),
+    risk: session.currentRisk(),
     totals: session.totals(),
     funnel: session.funnel(),
     capital: session.currentCapital(),

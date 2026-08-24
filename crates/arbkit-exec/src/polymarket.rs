@@ -29,6 +29,46 @@ pub struct PolymarketConfig {
     pub base_url: String,
     /// Fixed timestamp for fixtures; production uses current seconds.
     pub timestamp_s: Option<u64>,
+    /// Per-request deadline; a venue that cannot answer inside it fails the
+    /// hedge leg like any other rejection instead of stalling the runner.
+    pub request_timeout: Option<std::time::Duration>,
+}
+
+impl Default for PolymarketConfig {
+    fn default() -> Self {
+        Self {
+            wallet_address: String::new(),
+            l1_private_key: String::new(),
+            api_key: String::new(),
+            api_secret: String::new(),
+            passphrase: String::new(),
+            base_url: "https://clob.polymarket.com".into(),
+            timestamp_s: None,
+            request_timeout: Some(std::time::Duration::from_secs(5)),
+        }
+    }
+}
+
+impl PolymarketConfig {
+    /// Configuration preset targeting Polymarket's sandbox CLOB. The URL can
+    /// be overridden afterwards; no network claim is made by constructing it.
+    pub fn sandbox(
+        wallet_address: String,
+        l1_private_key: String,
+        api_key: String,
+        api_secret: String,
+        passphrase: String,
+    ) -> Self {
+        Self {
+            wallet_address,
+            l1_private_key,
+            api_key,
+            api_secret,
+            passphrase,
+            base_url: "https://staging.clob.polymarket.com".into(),
+            ..Self::default()
+        }
+    }
 }
 
 impl std::fmt::Debug for PolymarketConfig {
@@ -40,6 +80,8 @@ impl std::fmt::Debug for PolymarketConfig {
             .field("api_secret", &"[redacted]")
             .field("passphrase", &"[redacted]")
             .field("base_url", &self.base_url)
+            .field("timestamp_s", &self.timestamp_s)
+            .field("request_timeout", &self.request_timeout)
             .finish()
     }
 }
@@ -96,7 +138,11 @@ impl PolymarketExecutionAdapter {
                 "wallet, L1 key, API key, secret, and passphrase are required".into(),
             ));
         }
-        let client = Client::builder()
+        let mut builder = Client::builder();
+        if let Some(timeout) = config.request_timeout {
+            builder = builder.timeout(timeout);
+        }
+        let client = builder
             .build()
             .map_err(|e| PolymarketError::Transport(e.to_string()))?;
         Ok(Self { config, client })
@@ -349,6 +395,7 @@ mod tests {
             passphrase: "pass".into(),
             base_url: "http://localhost".into(),
             timestamp_s: Some(10),
+            request_timeout: None,
         })
         .unwrap();
         let signature = adapter.sign(10, "POST", "/order", "{}").unwrap();
@@ -368,6 +415,7 @@ mod tests {
             passphrase: "pass".into(),
             base_url: "http://localhost".into(),
             timestamp_s: Some(10),
+            request_timeout: None,
         })
         .unwrap();
         assert!(adapter
@@ -415,6 +463,7 @@ mod tests {
             passphrase: "pass".into(),
             base_url: format!("http://{address}"),
             timestamp_s: Some(10),
+            request_timeout: None,
         })
         .unwrap();
         let leg = ExecLeg {

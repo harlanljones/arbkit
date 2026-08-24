@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use frames::{LiveFrame, LIVE_SCHEMA_VERSION};
+use frames::{LiveFrame, RiskStateFrame, LIVE_SCHEMA_VERSION};
 use stream::{StreamConfig, StreamHandle};
 use trades_ledger::TradeRecord;
 
@@ -80,6 +80,7 @@ fn frames_serialize_to_the_frozen_wire_shape() {
         initial_bankroll_cents: Some(10_000),
         ticks_per_window: 200,
         window_ms: 1_000,
+        execution_mode: Some("paper"),
     };
     let line = start.to_ndjson_line().expect("session-start serializes");
     assert!(line.starts_with("{\"t\":\"session-start\""), "{line}");
@@ -88,6 +89,7 @@ fn frames_serialize_to_the_frozen_wire_shape() {
         line.contains("\"initialBankrollCents\":10000"),
         "camelCase money field missing: {line}"
     );
+    assert!(line.contains("\"executionMode\":\"paper\""), "{line}");
     assert!(line.ends_with("}\n"), "one NDJSON line per frame");
 
     let end = LiveFrame::SessionEnd.to_ndjson_line().unwrap();
@@ -108,6 +110,22 @@ fn frames_serialize_to_the_frozen_wire_shape() {
         parsed["items"][0]["worstCaseProfitCents"],
         record.worst_case_profit_cents
     );
+
+    // The risk posture frame carries the runner's own envelope verbatim:
+    // camelCase fields, kill switch as a boolean, absent caps as nulls.
+    let risk = LiveFrame::Risk {
+        state: RiskStateFrame::paper(false),
+    };
+    let line = risk.to_ndjson_line().unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(parsed["state"]["executionMode"], "paper");
+    assert_eq!(parsed["state"]["killSwitch"], false);
+    assert_eq!(
+        parsed["state"]["maxStakePerLegCents"],
+        serde_json::Value::Null
+    );
+    assert_eq!(risk.kind(), "risk");
+    assert_eq!(risk.record_count(), 0);
 
     // Accessors agree with the wire tags they mirror.
     assert_eq!(positions.kind(), "positions");
@@ -247,6 +265,7 @@ fn heartbeats_flow_when_the_session_goes_quiet() {
         initial_bankroll_cents: None,
         ticks_per_window: 200,
         window_ms: 1_000,
+        execution_mode: Some("paper"),
     });
 
     wait_until(
@@ -368,6 +387,7 @@ fn streams_a_full_session_over_real_http() {
         initial_bankroll_cents: Some(300_000),
         ticks_per_window: 200,
         window_ms: 1_000,
+        execution_mode: Some("paper"),
     });
     handle.send(LiveFrame::Positions {
         items: vec![sample_record(8), sample_record(9)],

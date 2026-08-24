@@ -166,3 +166,18 @@ unwound and reported as live phantoms. The default CLI mode is dry-run and the
 kill switch is enabled unless `ARBKIT_KILL_SWITCH=0` is explicitly supplied.
 Credentials belong only in environment variables or an external secret
 manager; they are never committed.
+
+The dashboard side of that boundary is a thin, authenticated relay. The
+`live_runner` example POSTs NDJSON frames to the worker's `PositionRoom`
+Durable Object (`LIVE_INGEST_TOKEN`), which owns the session arithmetic and
+fans out read-only viewer WebSockets. Two runner frames feed the operator
+surface without any client-side recomputation: `risk` carries the runner's
+authoritative posture (execution mode, kill switch, per-leg stake cap, daily
+loss budget, open-trade count, edge floor), and `fills` carries fill
+reconciliation keyed by client/venue order ID. Operator commands flow the
+opposite way through their own secret (`LIVE_OPERATOR_TOKEN`): the console
+POSTs to `/api/live/command`, the worker validates and queues, and the runner
+pulls from `/api/live/commands?afterId=<highWater>` and applies each command
+through its own `RiskGate` → `HedgedExecutor` seam — a `202` means queued,
+never applied. The console fails inert when disconnected, and an unknown kill
+switch always reads as engaged.

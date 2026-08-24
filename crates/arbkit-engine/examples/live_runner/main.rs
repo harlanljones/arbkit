@@ -22,6 +22,7 @@
 //! Without `--windows` the runner streams until killed; the session is
 //! declared stale by heartbeat timeout, never by a graceful goodbye.
 
+mod control;
 mod frames;
 mod stream;
 
@@ -48,7 +49,8 @@ use arbkit_match::team::{parse_matchup, Sport};
 use arbkit_match::{CanonicalRegistry, VenueRegistry};
 use arbkit_sim::{Bankroll, LatencyModel, LatencyProfile, Simulator};
 
-use frames::{LiveFrame, LIVE_SCHEMA_VERSION};
+use control::{control_url_from_ingest, poll_commands, OperatorCommand};
+use frames::{LiveFrame, RiskStateFrame, LIVE_SCHEMA_VERSION};
 use stream::{StreamConfig, StreamHandle};
 use trades_ledger::{build_trade_record, LabelResolver, TradeRecord};
 
@@ -592,9 +594,23 @@ fn main() {
         initial_bankroll_cents: bankroll.as_ref().map(Bankroll::total_available),
         ticks_per_window: args.ticks_per_window,
         window_ms: args.window_ms,
+        execution_mode: Some("paper"),
+    });
+    // Posture statement immediately after the session header, so the
+    // operator console never shows a mode or switch the runner did not
+    // itself declare. The kill switch starts engaged —
+    // `RiskConfig::default().kill_switch` — and only an explicit operator
+    // command opens order flow.
+    let mut kill_switch_engaged = true;
+    stream.send(LiveFrame::Risk {
+        state: RiskStateFrame::paper(kill_switch_engaged),
     });
     println!("Streaming live session {run_id}");
     println!("  ingest: {}", args.url);
+    println!(
+        "  control: {} (kill switch engaged)",
+        control_url_from_ingest(&args.url)
+    );
     println!(
         "  windows: {} ticks @ {} ms{}",
         args.ticks_per_window,
@@ -604,6 +620,17 @@ fn main() {
             None => String::from(", until killed"),
         }
     );
+
+    // Operator command pull: one agent, one request per window. Failures
+    // are printed and retried next window; they never stop the runner.
+    let control_url = control_url_from_ingest(&args.url);
+    let control_agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(3))
+        .user_agent("arbkit-live-runner")
+        .build();
+    let mut last_command_id: u64 = 0;
+    let mut gated_by_kill_switch = 0usize;
+    let mut operator_end_requested = false;
 
     // 6. Opening book state, then the windowed streaming loop.
     let feed = SyntheticFeed {
@@ -633,6 +660,51 @@ fn main() {
 
     let mut window_index = 0usize;
     loop {
+        // Operator commands land between windows, never mid-window: the
+        // hot loop finishes its slice, then the runner applies whatever the
+        // operator queued. At-least-once delivery means every arm of this
+        // match is safe to run twice.
+        match poll_commands(&control_agent, &control_url, &args.token, last_command_id) {
+            Ok(envelopes) => {
+                for envelope in envelopes {
+                    last_command_id = last_command_id.max(envelope.id);
+                    match envelope.command {
+                        OperatorCommand::KillSwitch { engage } => {
+                            if kill_switch_engaged != engage {
+                                kill_switch_engaged = engage;
+                                println!(
+                                    "[control] kill switch {} by command #{}",
+                                    if engage { "ENGAGED" } else { "disarmed" },
+                                    envelope.id
+                                );
+                                stream.send(LiveFrame::Risk {
+                                    state: RiskStateFrame::paper(kill_switch_engaged),
+                                });
+                            }
+                        }
+                        OperatorCommand::SessionEnd => {
+                            println!(
+                                "[control] session end requested by command #{}",
+                                envelope.id
+                            );
+                            operator_end_requested = true;
+                        }
+                        OperatorCommand::SessionStart { mode } => {
+                            // Honest refusal: this runner owns one session
+                            // per process. A supervisor that can open fresh
+                            // sessions is a production-runner concern.
+                            println!(
+                                "[control] session start ({mode}) requested by command #{}; \
+                                 this runner streams exactly one session per process — ignored",
+                                envelope.id
+                            );
+                        }
+                    }
+                }
+            }
+            Err(error) => eprintln!("[live-control] {error}"),
+        }
+
         if let Some(limit) = args.windows {
             if window_index >= limit {
                 break;
@@ -659,6 +731,16 @@ fn main() {
         thread::sleep(Duration::from_millis(20));
         while let Some(signal_event) = signal_cons.try_pop() {
             collected.push(signal_event);
+        }
+
+        // Kill-switch gate: an engaged switch means no signal is sized,
+        // reserved, or settled — the runner stands down entirely until it
+        // is disarmed. Dropped signals are counted and reported.
+        let mut stood_down_this_window = 0usize;
+        if kill_switch_engaged && !collected.is_empty() {
+            stood_down_this_window = collected.len();
+            gated_by_kill_switch += stood_down_this_window;
+            collected.clear();
         }
 
         // Size and settle each collected signal exactly as the batch
@@ -798,12 +880,28 @@ fn main() {
             println!("[w{window_index:04}] settled trades · realized {realized_window:+}¢");
         } else if !collected.is_empty() {
             println!("[w{window_index:04}] signals processed · no net change");
+        } else if stood_down_this_window > 0 {
+            println!(
+                "[w{window_index:04}] {} signal(s) stood down — kill switch engaged",
+                stood_down_this_window
+            );
         }
 
         window_index += 1;
         let elapsed = window_started.elapsed();
         if elapsed < window_duration {
             thread::sleep(window_duration - elapsed);
+        }
+
+        // An operator-requested end finishes the current window first so
+        // the last records stream, then exits through the same graceful
+        // shutdown as a finite run.
+        if operator_end_requested {
+            println!(
+                "[control] ending session gracefully after window {}",
+                window_index - 1
+            );
+            break;
         }
     }
 
@@ -843,6 +941,9 @@ fn main() {
         "  Phantoms / Broken Legs:    {:>6} / {}",
         stats.total_phantoms, stats.broken_legs
     );
+    if gated_by_kill_switch > 0 {
+        println!("  Stood Down (Kill Switch):  {:>12}", gated_by_kill_switch);
+    }
     println!("  Realized PnL:              {:>+12}¢", realized_total);
     println!("  Realized ROI:              {:>+9} bps", realized_roi_bps);
     println!(

@@ -217,6 +217,10 @@ The signature graphic is an authored semantic SVG with a logarithmic nanoseconds
 
 Charts use fine carbon axes, soft dashed grid lines, direct units, square bars, and flat tooltips. The selected run is verification green, the comparison run is blue, and the distant budget is dashed copper. Latency and verification figures provide disclosure-based semantic tables; the history comparison is a native table with row and column headers.
 
+### Operator Console
+
+The live-view control surface reads as operational evidence, not as an app chrome: a mono uppercase wordmark, status pills in the shared square one-pixel-border style (copper for kill-switch engaged and confirmation labels, verification green for disarmed), and a ruled five-fact posture grid pairing mono labels with mono values. Controls sit in square bordered fieldsets with mono legends; disabled states dim rather than disappear, because a gated control that says why it is gated is the honest one. Command feedback uses the muted mono status line — queued, refused, or awaiting the runner — and never a celebratory toast. The console reuses the live view's ledger paper ground and carbon rules; no new colors or radii are introduced.
+
 ### Motion
 
 The only authored reveal is the loading-state evidence rule, which scans once over 1.2 seconds with a decisive ease-out curve. Navigation underlines transition over 180ms. Reduced-motion preferences collapse animation and transition durations and disable smooth scrolling.

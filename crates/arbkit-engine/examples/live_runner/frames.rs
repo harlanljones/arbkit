@@ -17,6 +17,73 @@ use crate::trades_ledger::TradeRecord;
 /// Schema version of the live frame protocol. Bump on any shape change.
 pub const LIVE_SCHEMA_VERSION: u32 = 1;
 
+/// The runner's authoritative risk posture, exactly as its `RiskGate` holds
+/// it. A `None` cap means this runner enforces no such limit — the dashboard
+/// must render that honestly, never substitute a client-side default. Only a
+/// runner that genuinely enforces the full envelope (per-leg cap, daily loss
+/// budget, open-trade cap, edge floor) reports those fields as `Some`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RiskStateFrame {
+    /// `paper` or `live`; made explicit before any order can flow.
+    pub execution_mode: &'static str,
+    /// Hard stop mirroring `RiskConfig::default().kill_switch`.
+    pub kill_switch: bool,
+    pub max_stake_per_leg_cents: Option<i64>,
+    pub max_daily_loss_cents: Option<i64>,
+    /// Realized loss consumed from the daily budget, positive number.
+    pub daily_loss_used_cents: Option<i64>,
+    pub max_open_trades: Option<u32>,
+    pub open_trades: Option<u32>,
+    pub min_edge_bps: Option<u32>,
+}
+
+impl RiskStateFrame {
+    /// This paper runner's honest envelope: mode and kill switch are real,
+    /// every cap is absent because nothing here enforces one.
+    pub fn paper(kill_switch: bool) -> Self {
+        Self {
+            execution_mode: "paper",
+            kill_switch,
+            max_stake_per_leg_cents: None,
+            max_daily_loss_cents: None,
+            daily_loss_used_cents: None,
+            max_open_trades: None,
+            open_trades: None,
+            min_edge_bps: None,
+        }
+    }
+}
+
+/// How far a reconciled fill has progressed into the authoritative ledger.
+/// Part of the frozen wire contract even though the paper runner — whose
+/// settlement is instantaneous — never emits one; that is contract
+/// completeness, not dead design.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SettlementStatus {
+    Open,
+    Settled,
+    Unwound,
+}
+
+/// One fill event keyed by the execution layer's idempotency key. Realized
+/// cents ride along only once settlement has actually reported them.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FillRecord {
+    pub client_order_id: String,
+    pub venue_order_id: Option<String>,
+    /// Links the fill to its streamed [`TradeRecord`] when one exists.
+    pub trade_seq: Option<u64>,
+    pub filled_stake_cents: i64,
+    pub realized_profit_cents: Option<i64>,
+    pub settlement_status: SettlementStatus,
+    pub reconciled_at_epoch_ms: u128,
+}
+
 /// One message on the runner → ingest wire. Internally tagged with `"t"` so
 /// a reader can dispatch on the first bytes it needs regardless of framing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -33,7 +100,23 @@ pub enum LiveFrame {
         initial_bankroll_cents: Option<i64>,
         ticks_per_window: usize,
         window_ms: u64,
+        /// `paper` or `live`, stated up front. Absent on pre-extension
+        /// runners, which the dashboard must treat as mode unknown.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        execution_mode: Option<&'static str>,
     },
+    /// The runner's own risk posture, sent at session open and whenever a
+    /// command (or the runner itself) moves it. The dashboard's kill-switch
+    /// pill and risk envelope are built from exactly this frame.
+    #[serde(rename = "risk")]
+    Risk { state: RiskStateFrame },
+    /// Fill events as they reconcile into the authoritative ledger, keyed by
+    /// client order id. Paper settlement is instantaneous, so paper runners
+    /// stream none; live reconciliation streams one per venue fill. Kept in
+    /// the paper runner's enum so the wire contract has exactly one shape.
+    #[serde(rename = "fills")]
+    #[allow(dead_code)]
+    Fills { items: Vec<FillRecord> },
     /// A batch of completed paper trades, detection order preserved. Each
     /// item already carries its realized outcome: the sim settles at fill
     /// time, so "locked" here means capital committed until settlement,
@@ -68,6 +151,8 @@ impl LiveFrame {
     pub fn kind(&self) -> &'static str {
         match self {
             LiveFrame::SessionStart { .. } => "session-start",
+            LiveFrame::Risk { .. } => "risk",
+            LiveFrame::Fills { .. } => "fills",
             LiveFrame::Positions { .. } => "positions",
             LiveFrame::Stats { .. } => "stats",
             LiveFrame::Heartbeat { .. } => "heartbeat",
@@ -81,6 +166,7 @@ impl LiveFrame {
     pub fn record_count(&self) -> usize {
         match self {
             LiveFrame::Positions { items } => items.len(),
+            LiveFrame::Fills { items } => items.len(),
             _ => 0,
         }
     }

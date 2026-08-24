@@ -10,6 +10,7 @@
     "typecheck:worker": "tsc -p worker/tsconfig.json --noEmit",
     "test:e2e": "playwright test",
     "record": "node scripts/record-run.mjs",
+    "shots": "npm run build && node scripts/capture-live-screens.mjs",
     "validate:report": "node scripts/validate-report.mjs",
     "deploy": "wrangler deploy",
     "deploy:dry": "wrangler deploy --dry-run"

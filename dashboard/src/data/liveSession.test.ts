@@ -48,6 +48,17 @@ const SNAPSHOT_BASE = {
     ticksPerWindow: 200,
     windowMs: 1_000,
   },
+  risk: {
+    executionMode: "paper",
+    killSwitch: true,
+    maxStakePerLegCents: null,
+    maxDailyLossCents: null,
+    dailyLossUsedCents: null,
+    maxOpenTrades: null,
+    openTrades: null,
+    minEdgeBps: null,
+  },
+  fills: [],
   totals: {
     trades: 2,
     stakedCents: 200_000,
@@ -83,6 +94,7 @@ function totalsFrame(
   return ViewerFrameSchema.parse({
     t: "totals",
     status: base.status,
+    risk: base.risk,
     totals: { ...base.totals, trades: 3, ...overrides },
     funnel: base.funnel,
     capital: base.capital,
@@ -175,6 +187,7 @@ describe("applyLiveFrame", () => {
       ViewerFrameSchema.parse({
         t: "totals",
         status: "stale",
+        risk: SNAPSHOT_BASE.risk,
         totals: SNAPSHOT_BASE.totals,
         funnel: SNAPSHOT_BASE.funnel,
         capital: SNAPSHOT_BASE.capital,
@@ -190,6 +203,7 @@ describe("applyLiveFrame", () => {
       ViewerFrameSchema.parse({
         t: "totals",
         status: "ended",
+        risk: SNAPSHOT_BASE.risk,
         totals: SNAPSHOT_BASE.totals,
         funnel: SNAPSHOT_BASE.funnel,
         capital: SNAPSHOT_BASE.capital,
@@ -201,12 +215,71 @@ describe("applyLiveFrame", () => {
     expect(state.sessionStatus).toBe("ended");
   });
 
+  it("adopts a risk frame verbatim and never merges it with prior posture", () => {
+    let state = applyLiveFrame(initialLiveSession, snapshot(), 5_000);
+    state = applyLiveFrame(
+      state,
+      ViewerFrameSchema.parse({
+        t: "risk",
+        state: { ...SNAPSHOT_BASE.risk, killSwitch: false },
+      }),
+      5_100,
+    );
+    expect(state.risk?.killSwitch).toBe(false);
+
+    // A runner restart re-asserts engaged wholesale; no stale disarm survives.
+    state = applyLiveFrame(
+      state,
+      ViewerFrameSchema.parse({ t: "risk", state: SNAPSHOT_BASE.risk }),
+      5_200,
+    );
+    expect(state.risk?.killSwitch).toBe(true);
+  });
+
+  it("dedupes fill events by client/venue order id and keeps the newest report", () => {
+    const fill = (settlementStatus: string, realizedProfitCents: number | null) => ({
+      clientOrderId: "cid-1",
+      venueOrderId: "vid-9" as string | null,
+      tradeSeq: 4 as number | null,
+      filledStakeCents: 50_000,
+      realizedProfitCents,
+      settlementStatus,
+      reconciledAtEpochMs: 1_000,
+    });
+    let state = applyLiveFrame(initialLiveSession, snapshot(), 5_000);
+    state = applyLiveFrame(
+      state,
+      ViewerFrameSchema.parse({
+        t: "fills",
+        items: [fill("open", null)],
+      }),
+      5_100,
+    );
+    expect(state.fills).toHaveLength(1);
+
+    // At-least-once delivery of an updated fill replaces the earlier self.
+    state = applyLiveFrame(
+      state,
+      ViewerFrameSchema.parse({
+        t: "fills",
+        items: [fill("settled", 1_234)],
+      }),
+      5_200,
+    );
+    expect(state.fills).toHaveLength(1);
+    expect(state.fills[0]).toMatchObject({
+      settlementStatus: "settled",
+      realizedProfitCents: 1_234,
+    });
+  });
+
   it("rejects malformed viewer frames at the schema boundary", () => {
     expect(ViewerFrameSchema.safeParse({ t: "wat" }).success).toBe(false);
     expect(
       ViewerFrameSchema.safeParse({
         t: "totals",
         status: "live",
+        risk: SNAPSHOT_BASE.risk,
         totals: { ...SNAPSHOT_BASE.totals, stakedCents: 1.5 },
         funnel: SNAPSHOT_BASE.funnel,
         capital: SNAPSHOT_BASE.capital,
@@ -218,6 +291,30 @@ describe("applyLiveFrame", () => {
     expect(
       ViewerFrameSchema.safeParse({ t: "positions", items: [{ ...record(0), legs: "nope" }] })
         .success,
+    ).toBe(false);
+    expect(
+      ViewerFrameSchema.safeParse({
+        t: "risk",
+        state: { ...SNAPSHOT_BASE.risk, killSwitch: "no" },
+      }).success,
+      "kill switch must be a boolean, never a string",
+    ).toBe(false);
+    expect(
+      ViewerFrameSchema.safeParse({
+        t: "fills",
+        items: [
+          {
+            clientOrderId: "",
+            venueOrderId: null,
+            tradeSeq: null,
+            filledStakeCents: 1,
+            realizedProfitCents: null,
+            settlementStatus: "open",
+            reconciledAtEpochMs: 1,
+          },
+        ],
+      }).success,
+      "a fill without its idempotency key must be rejected",
     ).toBe(false);
   });
 });

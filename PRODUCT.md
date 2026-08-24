@@ -24,7 +24,7 @@ The project separates canonical market matching from a fixed-point, zero-allocat
 
 ## Operating Context
 
-Engineers run the release pipeline locally, review the console report and generated JSON snapshot, then commit approved dated results. Cloudflare Workers Builds publishes the static dashboard to `https://arbkit.harlanljones.com/` from repository history. Live order placement is not part of the project.
+Engineers run the release pipeline locally, review the console report and generated JSON snapshot, then commit approved dated results. Cloudflare Workers Builds publishes the static dashboard to `https://arbkit.harlanljones.com/` from repository history. The public deployment remains evidence-only; live order placement exists only as the opt-in, operator-authenticated console documented in `LIVE_TRADING.md`, and no venue credentials ship with the project.
 
 ## Capabilities and Constraints
 

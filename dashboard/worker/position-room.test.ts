@@ -11,7 +11,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PositionRoom } from "./position-room";
 import { STALE_AFTER_MS } from "./state";
-import { runnerFrameSchema, type TradeRecord } from "./wire";
+import {
+  operatorCommandSchema,
+  runnerFrameSchema,
+  type TradeRecord,
+} from "./wire";
 
 function record(seq: number, overrides: Partial<TradeRecord> = {}): TradeRecord {
   return {
@@ -381,3 +385,145 @@ function connectViewerSync(room: PositionRoom): FakeServerSocket {
   (room as unknown as { viewers: Set<object> }).viewers.add(socket);
   return socket;
 }
+
+describe("PositionRoom operator commands", () => {
+  const COMMAND_URL = "https://room.internal/api/live/command";
+  const PULL_URL = "https://room.internal/api/live/commands";
+
+  function postCommand(room: PositionRoom, body: string): Promise<Response> {
+    return room.fetch(new Request(COMMAND_URL, { method: "POST", body }));
+  }
+
+  it("queues only schema-valid commands and acks them with monotonic ids", async () => {
+    const { room } = makeRoom();
+
+    // Every acceptance and rejection path the ticket pins: unknown tag,
+    // wrong mode, non-boolean engage.
+    expect(operatorCommandSchema.safeParse({ t: "kill-switch", engage: true }).success).toBe(
+      true,
+    );
+    expect(operatorCommandSchema.safeParse({ t: "self-destruct" }).success).toBe(false);
+    expect(
+      operatorCommandSchema.safeParse({ t: "session-start", mode: "yolo" }).success,
+    ).toBe(false);
+    expect(operatorCommandSchema.safeParse({ t: "kill-switch", engage: 1 }).success).toBe(false);
+
+    const first = await postCommand(room, JSON.stringify({ t: "kill-switch", engage: false }));
+    expect(first.status).toBe(202);
+    expect(await first.json()).toMatchObject({ queued: 1 });
+
+    const second = await postCommand(room, JSON.stringify({ t: "session-end" }));
+    expect(await second.json()).toMatchObject({ queued: 2 });
+  });
+
+  it("refuses malformed command bodies before they reach the queue", async () => {
+    const { room } = makeRoom();
+
+    const notJson = await postCommand(room, "{not json");
+    expect(notJson.status).toBe(400);
+    expect(await notJson.json()).toMatchObject({ error: "command is not valid JSON" });
+
+    const badSchema = await postCommand(room, JSON.stringify({ t: "kill-switch" }));
+    expect(badSchema.status).toBe(400);
+    expect(await badSchema.json()).toMatchObject({
+      error: "command failed schema validation",
+    });
+
+    const oversized = await postCommand(room, "x".repeat(4 * 1024 + 1));
+    expect(oversized.status).toBe(413);
+  });
+
+  it("serves queued commands to the runner by high-water id, oldest first", async () => {
+    const { room } = makeRoom();
+
+    // Nothing queued yet: the pull answers with an honest empty 204.
+    const empty = await room.fetch(new Request(PULL_URL));
+    expect(empty.status).toBe(204);
+
+    await postCommand(room, JSON.stringify({ t: "kill-switch", engage: false }));
+    await postCommand(room, JSON.stringify({ t: "kill-switch", engage: true }));
+
+    const all = await room.fetch(new Request(`${PULL_URL}?afterId=0`));
+    expect(all.status).toBe(200);
+    expect(all.headers.get("content-type")).toContain("application/x-ndjson");
+    const lines = (await all.text()).trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines).toEqual([
+      { id: 1, command: { t: "kill-switch", engage: false } },
+      { id: 2, command: { t: "kill-switch", engage: true } },
+    ]);
+
+    // The runner acknowledges ids as it applies them; a pull from its
+    // high-water mark yields only newer work.
+    const newer = await room.fetch(new Request(`${PULL_URL}?afterId=1`));
+    const newerLines = (await newer.text()).trim().split("\n").map((l) => JSON.parse(l));
+    expect(newerLines).toEqual([{ id: 2, command: { t: "kill-switch", engage: true } }]);
+
+    const caughtUp = await room.fetch(new Request(`${PULL_URL}?afterId=2`));
+    expect(caughtUp.status).toBe(204);
+
+    const bogusAfterId = await room.fetch(new Request(`${PULL_URL}?afterId=-3`));
+    expect(bogusAfterId.status).toBe(400);
+  });
+
+  it("gates both command surfaces by method", async () => {
+    const { room } = makeRoom();
+    expect((await room.fetch(new Request(COMMAND_URL))).status).toBe(405);
+    expect((await room.fetch(new Request(PULL_URL, { method: "POST" }))).status).toBe(405);
+  });
+
+  it("keeps the kill switch engaged in snapshots until a runner reports otherwise", async () => {
+    const { room } = makeRoom();
+    const viewer = connectViewerSync(room);
+    await ingest(room, sessionStartFrame("run-1"));
+
+    const idleSnapshot = viewer.frames().at(-1)!;
+    expect(idleSnapshot.risk).toBeNull();
+
+    await ingest(
+      room,
+      wireFrame({
+        t: "risk",
+        state: {
+          executionMode: "paper",
+          killSwitch: false,
+          maxStakePerLegCents: null,
+          maxDailyLossCents: null,
+          dailyLossUsedCents: null,
+          maxOpenTrades: null,
+          openTrades: null,
+          minEdgeBps: null,
+        },
+      }),
+    );
+    const disarmed = viewer.frames().at(-1)!;
+    expect(disarmed.t).toBe("totals");
+    expect(disarmed.risk).toMatchObject({ executionMode: "paper", killSwitch: false });
+
+    // A fresh session resets the posture: the new runner must re-declare.
+    await ingest(room, sessionStartFrame("run-2"));
+    const resetSnapshot = viewer.frames().findLast((f) => f.t === "snapshot")!;
+    expect(resetSnapshot.risk).toBeNull();
+  });
+
+  it("relays reconciled fill events into the viewer snapshot", async () => {
+    const { room } = makeRoom();
+    const viewer = connectViewerSync(room);
+    const fill = {
+      clientOrderId: "cid-abc",
+      venueOrderId: "vid-77",
+      tradeSeq: 4,
+      filledStakeCents: 50_000,
+      realizedProfitCents: null,
+      settlementStatus: "open",
+      reconciledAtEpochMs: 1_000,
+    };
+
+    await ingest(
+      room,
+      [sessionStartFrame("run-1"), wireFrame({ t: "fills", items: [fill] })].join("\n"),
+    );
+
+    const snapshot = viewer.frames().findLast((f) => f.t === "snapshot")!;
+    expect(snapshot.fills).toEqual([fill]);
+  });
+});

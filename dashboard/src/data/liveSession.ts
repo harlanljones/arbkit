@@ -7,13 +7,23 @@
 //! The one thing it maintains locally is presentation history: a capped
 //! ledger of recent rows and a capped ROI sampling series for the sparkline.
 
-import type { Capital, Funnel, SessionHeader, Totals, ViewerFrame } from "./liveSchema";
+import type {
+  Capital,
+  FillRecord,
+  Funnel,
+  RiskState,
+  SessionHeader,
+  Totals,
+  ViewerFrame,
+} from "./liveSchema";
 import type { TradeRecord } from "./schema";
 
 /** Recent ledger rows kept for display; totals live server-side. */
 export const MAX_ITEMS = 500;
 /** ROI samples kept for the sparkline (~1 per totals push, burst-tolerant). */
 export const MAX_ROI_POINTS = 720;
+/** Recent fill-reconciliation events kept for the operator feed. */
+export const MAX_FILLS = 128;
 
 export type ConnectionStatus = "connecting" | "open" | "reconnecting";
 export type SessionStatus = "idle" | "live" | "stale" | "ended";
@@ -28,6 +38,10 @@ export interface LiveSessionState {
   connection: ConnectionStatus;
   session: SessionHeader | null;
   sessionStatus: SessionStatus;
+  /** Authoritative risk posture, or null before any runner has reported —
+   * null must be treated as kill-switch-engaged by every consumer. */
+  risk: RiskState | null;
+  fills: FillRecord[];
   totals: Totals | null;
   funnel: Funnel | null;
   capital: Capital | null;
@@ -42,6 +56,8 @@ export const initialLiveSession: LiveSessionState = {
   connection: "connecting",
   session: null,
   sessionStatus: "idle",
+  risk: null,
+  fills: [],
   totals: null,
   funnel: null,
   capital: null,
@@ -73,6 +89,8 @@ export function applyLiveFrame(
         connection: "open",
         session: frame.session,
         sessionStatus: frame.status,
+        risk: frame.risk,
+        fills: capTail(frame.fills, MAX_FILLS),
         totals: frame.totals,
         funnel: frame.funnel,
         capital: frame.capital,
@@ -124,6 +142,7 @@ export function applyLiveFrame(
       return {
         ...state,
         sessionStatus: frame.status,
+        risk: frame.risk,
         totals: frame.totals,
         funnel: frame.funnel,
         capital: frame.capital,
@@ -143,7 +162,29 @@ export function applyLiveFrame(
         lastFrameAtMs: nowMs,
       };
     }
+
+    case "risk":
+      // The runner's own posture statement, adopted verbatim — never merged
+      // with what we held before, so a runner restart cannot inherit a
+      // stale disarm.
+      return { ...state, risk: frame.state, lastFrameAtMs: nowMs };
+
+    case "fills": {
+      const merged = dedupeFills([...state.fills, ...frame.items]);
+      return { ...state, fills: capTail(merged, MAX_FILLS), lastFrameAtMs: nowMs };
+    }
   }
+}
+
+/** Fill identity is the reconciliation key: client order id plus venue order
+ * id once assigned. A re-pushed fill replaces its earlier self (at-least-once
+ * delivery), keeping the newest report for each order. */
+function dedupeFills(fills: FillRecord[]): FillRecord[] {
+  const byKey = new Map<string, FillRecord>();
+  for (const fill of fills) {
+    byKey.set(`${fill.clientOrderId}:${fill.venueOrderId ?? ""}`, fill);
+  }
+  return [...byKey.values()];
 }
 
 function shallowTotalsEqual(a: Totals, b: Totals): boolean {

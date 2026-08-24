@@ -18,6 +18,8 @@ use thiserror::Error;
 
 pub mod proof;
 pub use proof::{compare_tape, LiveProofReport, TapeComparison};
+#[cfg(feature = "paper-replay")]
+pub use proof::{replay_paper_tape, OccurrenceLeg, OccurrenceRecord};
 
 #[cfg(feature = "live")]
 pub mod kalshi;

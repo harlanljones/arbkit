@@ -3,7 +3,7 @@
 use crate::{ExecLeg, RiskConfig, RiskGate};
 use arbkit_core::{Cents, VenueId};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -122,6 +122,19 @@ impl RiskStateStore {
         &self.path
     }
 
+    /// Persist a risk-gate checkpoint without discarding recorded in-flight
+    /// orders. A plain `save(From<&gate>)` would wipe crash-recovery state on
+    /// every checkpoint, so this merges the live fields over what is stored.
+    pub fn checkpoint(&self, gate: &RiskGate) -> Result<DurableRiskState, String> {
+        let mut state = self.load().unwrap_or_else(|_| DurableRiskState::from(gate));
+        state.config = gate.config;
+        state.daily_loss_cents = gate.daily_loss_cents;
+        state.open_trades = gate.open_trades;
+        state.bankroll = gate.bankroll_snapshot();
+        self.save(&state)?;
+        Ok(state)
+    }
+
     /// Persist an order before network submission.
     pub fn register_inflight(&self, order: InFlightOrder) -> Result<DurableRiskState, String> {
         let mut state = self.load().unwrap_or_else(|_| DurableRiskState {
@@ -233,6 +246,10 @@ pub struct ReconciliationLedger {
     pub realized_profit_cents: Cents,
     /// Authoritative fees.
     pub fees_paid_cents: Cents,
+    /// Fingerprints of fill events already folded in. Fill streams are
+    /// at-least-once; an exact replay must never double-count money.
+    #[serde(default)]
+    pub applied_fills: HashSet<String>,
 }
 /// One order's lifecycle state.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -289,6 +306,23 @@ impl ReconciliationLedger {
             })
             .map(|(key, _)| key.clone())
             .ok_or_else(|| format!("unknown order {}", fill.venue_order_id))?;
+        // A replayed event is the venue restating what we already recorded;
+        // folding it in again would fabricate fees or profit.
+        let fingerprint = format!(
+            "{}|{}|{}|{}|{}|{}",
+            key,
+            hex_id(&fill.client_order_id.unwrap_or_default()),
+            fill.venue_order_id,
+            fill.filled_stake_cents,
+            fill.fee_cents,
+            match fill.realized_profit_cents {
+                Some(profit) => format!("profit={profit}"),
+                None => "unsettled".to_owned(),
+            },
+        );
+        if !self.applied_fills.insert(fingerprint) {
+            return Ok(());
+        }
         let order = self.orders.get_mut(&key).expect("key found above");
         order.venue_order_id = Some(fill.venue_order_id);
         order.filled_stake_cents = fill.filled_stake_cents;
@@ -359,5 +393,40 @@ mod tests {
             80
         );
         assert_eq!(ledger.fees_paid_cents, 2);
+    }
+
+    #[test]
+    fn replayed_fill_events_are_counted_once() {
+        let mut ledger = ReconciliationLedger::default();
+        ledger.register(InFlightOrder {
+            client_order_id: [9; 16],
+            leg: PersistedExecLeg::from(&leg()),
+            created_at_ms: 0,
+            venue_order_id: None,
+        });
+        let fill = |profit: Option<i64>| FillEvent {
+            client_order_id: Some([9; 16]),
+            venue_order_id: "v-replay".into(),
+            filled_stake_cents: 80,
+            fee_cents: 3,
+            realized_profit_cents: profit,
+            status: "settled".into(),
+        };
+
+        ledger.apply_fill(fill(Some(120))).unwrap();
+        // The venue redelivers the same settlement (at-least-once stream).
+        ledger.apply_fill(fill(Some(120))).unwrap();
+
+        assert_eq!(
+            ledger.fees_paid_cents, 3,
+            "replay must not double-count fees"
+        );
+        assert_eq!(ledger.realized_profit_cents, 120);
+        assert_eq!(ledger.applied_fills.len(), 1);
+
+        // A genuinely new event still accumulates.
+        ledger.apply_fill(fill(Some(80))).unwrap();
+        assert_eq!(ledger.realized_profit_cents, 200);
+        assert_eq!(ledger.fees_paid_cents, 6);
     }
 }

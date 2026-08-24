@@ -52,6 +52,17 @@ class MockSocket {
   }
 }
 
+const RISK_STATE = {
+  executionMode: "paper",
+  killSwitch: true,
+  maxStakePerLegCents: null,
+  maxDailyLossCents: null,
+  dailyLossUsedCents: null,
+  maxOpenTrades: null,
+  openTrades: null,
+  minEdgeBps: null,
+};
+
 const SNAPSHOT_FRAME = {
   t: "snapshot",
   status: "live",
@@ -62,6 +73,8 @@ const SNAPSHOT_FRAME = {
     ticksPerWindow: 200,
     windowMs: 400,
   },
+  risk: RISK_STATE,
+  fills: [],
   totals: {
     trades: 76,
     stakedCents: 7_433_794,
@@ -190,6 +203,8 @@ describe("LivePoc", () => {
       t: "snapshot",
       status: "idle",
       session: null,
+      risk: null,
+      fills: [],
       totals: {
         trades: 0,
         stakedCents: 0,
@@ -318,6 +333,7 @@ describe("LivePoc", () => {
     socket.message({
       t: "totals",
       status: "stale",
+      risk: RISK_STATE,
       totals: SNAPSHOT_FRAME.totals,
       funnel: SNAPSHOT_FRAME.funnel,
       capital: SNAPSHOT_FRAME.capital,

@@ -10,11 +10,13 @@ description = "Explicitly gated live and dry-run execution for arbkit"
 [features]
 default = []
 live = ["dep:reqwest", "dep:rsa", "dep:sha2", "dep:base64", "dep:rand", "dep:hmac", "dep:k256"]
+paper-replay = ["dep:arbkit-sim"]
 
 [dependencies]
 arbkit-core = { path = "../arbkit-core" }
 arbkit-match = { path = "../arbkit-match" }
 arbkit-engine = { path = "../arbkit-engine" }
+arbkit-sim = { path = "../arbkit-sim", optional = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -29,3 +31,7 @@ k256 = { version = "0.13", features = ["ecdsa", "sha256"], optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+
+[[example]]
+name = "same_tape_proof"
+required-features = ["paper-replay"]
