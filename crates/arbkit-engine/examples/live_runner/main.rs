@@ -33,6 +33,8 @@ mod stream;
 mod trades_ledger;
 
 use std::env;
+use std::fs;
+use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -332,12 +334,12 @@ const USAGE: &str = "Usage: live_runner [--url <ingest-url>] [--token-env <VAR>]
 fn parse_args() -> RunnerArgs {
     let mut args = RunnerArgs {
         url: String::from("http://127.0.0.1:8787/api/live/ingest"),
-        // Default token source mirrors the dashboard's `.dev.vars`, so
-        // `set -a; source dashboard/.dev.vars; set +a` is all the wiring a
-        // local session needs. ARBLIVE_TOKEN stays as a fallback alias.
-        token: env::var("LIVE_INGEST_TOKEN")
-            .or_else(|_| env::var("ARBLIVE_TOKEN"))
-            .unwrap_or_default(),
+        // Default token mirrors the dashboard's own resolution order so one
+        // `.dev.vars` serves both sides of the stream: `--token-env` names an
+        // explicit override, the environment wins over the file, and the file
+        // is found whether the runner starts at the repo root or in
+        // `dashboard/`.
+        token: resolve_default_token(),
         ticks_per_window: 200,
         window_ms: 1_000,
         bankroll_cents: 0,
@@ -396,9 +398,48 @@ fn parse_args() -> RunnerArgs {
         }
     }
     if args.token.is_empty() && !args.url.starts_with("http://127.0.0.1") {
-        eprintln!("warning: no LIVE_INGEST_TOKEN / ARBLIVE_TOKEN set; the ingest will be rejected");
+        eprintln!(
+            "warning: no token found (env, --token-env, or dashboard/.dev.vars); \
+             the ingest will be rejected"
+        );
     }
     args
+}
+
+/// Token resolution order: the `--token-env` variable, then the environment,
+/// then `dashboard/.dev.vars` beside or above the working directory — the
+/// same file `wrangler dev` reads, so one source of truth serves both sides
+/// of the stream and a bare `cargo run` from either directory just works.
+fn resolve_default_token() -> String {
+    if let Ok(token) = env::var("LIVE_INGEST_TOKEN") {
+        return token;
+    }
+    if let Ok(token) = env::var("ARBLIVE_TOKEN") {
+        return token;
+    }
+    read_dot_dev_vars_token()
+}
+
+/// Scans candidate `.dev.vars` locations for `LIVE_INGEST_TOKEN`. The file
+/// never overrides an exported variable — dotenv semantics, deliberately.
+fn read_dot_dev_vars_token() -> String {
+    for candidate in [
+        PathBuf::from("dashboard/.dev.vars"),
+        PathBuf::from(".dev.vars"),
+    ] {
+        let Ok(contents) = fs::read_to_string(&candidate) else {
+            continue;
+        };
+        for line in contents.lines() {
+            if let Some(value) = line.strip_prefix("LIVE_INGEST_TOKEN=") {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    return trimmed.to_string();
+                }
+            }
+        }
+    }
+    String::new()
 }
 
 fn git_commit_short() -> Option<String> {
