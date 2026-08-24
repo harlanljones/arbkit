@@ -31,6 +31,7 @@ version = "0.1.0"
 dependencies = [
  "arbkit-core",
  "arbkit-engine",
+ "arbkit-feed",
  "arbkit-match",
  "arbkit-sim",
  "base64",
@@ -45,6 +46,7 @@ dependencies = [
  "sha2",
  "thiserror",
  "tokio",
+ "ureq",
 ]
 
 [[package]]
@@ -53,11 +55,15 @@ version = "0.1.0"
 dependencies = [
  "arbkit-core",
  "arbkit-match",
+ "base64",
  "futures-util",
  "proptest",
+ "rand 0.8.7",
  "reqwest",
+ "rsa",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "tokio",
  "tokio-tungstenite",
@@ -1573,8 +1579,12 @@ checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -1659,6 +1669,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.5",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror",
  "utf-8",

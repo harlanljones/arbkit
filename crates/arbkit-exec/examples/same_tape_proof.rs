@@ -116,6 +116,25 @@ async fn main() {
             );
             std::process::exit(1);
         }
+
+        // Phantom-rate halt: live phantoms running more than 10 percentage
+        // points (1000 bps) above the paper baseline means the fill model no
+        // longer describes the venue — halt micro-live and re-arm.
+        let rate = |report: &LiveProofReport| -> i64 {
+            if report.attempted_arbs == 0 {
+                return 0;
+            }
+            (report.live_phantoms as i64 * 10_000).div_euclid(report.attempted_arbs as i64)
+        };
+        let (paper_rate, live_rate) = (rate(&paper), rate(&live));
+        if live_rate - paper_rate > 1_000 {
+            eprintln!(
+                "PHANTOM-RATE HALT: live {} bps vs paper {} bps (>{:?} delta) — \
+                 re-arm the kill switch and explain before resuming",
+                live_rate, paper_rate, 1_000i64
+            );
+            std::process::exit(2);
+        }
     } else {
         println!("{}", paper.to_json().expect("serialize paper report"));
     }

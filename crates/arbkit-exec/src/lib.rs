@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod proof;
+#[cfg(feature = "paper-replay")]
+pub use proof::occurrence_record;
 pub use proof::{compare_tape, LiveProofReport, TapeComparison};
 #[cfg(feature = "paper-replay")]
 pub use proof::{replay_paper_tape, OccurrenceLeg, OccurrenceRecord};
@@ -38,6 +40,12 @@ pub use state::{
     DurableRiskState, FeedCircuitBreaker, FillEvent, InFlightOrder, PersistedExecLeg, RateLimiter,
     ReconciliationLedger, RiskStateStore,
 };
+
+pub mod reconcile;
+pub use reconcile::{is_terminal_status, Reconciler, Settlement, SettlementSource};
+
+pub mod secrets;
+pub use secrets::SecretScan;
 
 /// Cancel every known accepted order during an emergency flatten operation.
 pub fn emergency_flatten<A: VenueAdapter>(
@@ -177,6 +185,23 @@ impl Default for RiskConfig {
             min_edge_bps: 50,
             kill_switch: true,
         }
+    }
+}
+
+/// Per-leg stake cap for micro-live: two contracts at any legal binary price
+/// (≤ 99¢) can never exceed this, so the cap *is* the two-contract limit
+/// regardless of what the book quotes.
+pub const MICRO_MAX_STAKE_PER_LEG_CENTS: Cents = 200;
+
+/// Micro-live policy: the daily loss budget is one worst-case leg loss — the
+/// entire stake of a single leg — never more.
+pub fn micro_live_config(env: RiskConfig) -> RiskConfig {
+    RiskConfig {
+        max_stake_per_leg_cents: env
+            .max_stake_per_leg_cents
+            .min(MICRO_MAX_STAKE_PER_LEG_CENTS),
+        max_daily_loss_cents: env.max_daily_loss_cents.min(MICRO_MAX_STAKE_PER_LEG_CENTS),
+        ..env
     }
 }
 
@@ -385,13 +410,36 @@ pub struct HedgedExecutor<'a> {
 
 impl<'a> HedgedExecutor<'a> {
     /// Preflight, submit both legs, and unwind any partial hedge.
-    pub fn execute<A: VenueAdapter, B: VenueAdapter>(
+    ///
+    /// The two legs are submitted **concurrently** so neither is priced
+    /// against a book that moved during the other's round-trip — a sequential
+    /// pair of blocking venue calls is how a clean fill turns into a phantom.
+    /// Concurrency uses scoped threads on borrowed adapters and blocks until
+    /// both results are in, so the trait seam stays synchronous and testable
+    /// under `cargo test` with no async runtime. The runner calls this from
+    /// its own execution task, off the engine hot loop.
+    pub fn execute<A: VenueAdapter + Sync, B: VenueAdapter + Sync>(
         &mut self,
         edge_bps: u32,
         legs: &[ExecLeg],
         first: &A,
         second: &B,
     ) -> Result<ExecutionReport, ExecError> {
+        self.execute_reconciled(edge_bps, legs, first, second)
+            .map(|(report, _)| report)
+    }
+
+    /// Same as [`HedgedExecutor::execute`], but also returns the per-leg
+    /// reconciliation view (`client_order_id` -> venue order id -> status) so
+    /// a runner can register/acknowledge orders for settlement polling. The
+    /// wire-facing report is unchanged.
+    pub fn execute_reconciled<A: VenueAdapter + Sync, B: VenueAdapter + Sync>(
+        &mut self,
+        edge_bps: u32,
+        legs: &[ExecLeg],
+        first: &A,
+        second: &B,
+    ) -> Result<(ExecutionReport, Vec<ReconciledLeg>), ExecError> {
         if legs.len() != 2 {
             return Err(ExecError::Venue {
                 venue: 0,
@@ -401,14 +449,22 @@ impl<'a> HedgedExecutor<'a> {
         self.risk
             .preflight(edge_bps, legs)
             .map_err(ExecError::Risk)?;
-        let first_result = first.submit(&legs[0]);
-        let second_result = second.submit(&legs[1]);
+        let (first_result, second_result) = std::thread::scope(|scope| {
+            let first_join = scope.spawn(|| first.submit(&legs[0]));
+            let second_join = scope.spawn(|| second.submit(&legs[1]));
+            (
+                join_submit(first_join, |m| format!("first leg submit panicked: {m}")),
+                join_submit(second_join, |m| format!("second leg submit panicked: {m}")),
+            )
+        });
+        let accepted_first = first_result.as_ref().ok().map(|r| r.order_id.clone());
+        let accepted_second = second_result.as_ref().ok().map(|r| r.order_id.clone());
         let mut accepted = Vec::new();
-        if let Ok(ref result) = first_result {
-            accepted.push((0usize, result.order_id.clone()));
+        if let Some(ref id) = accepted_first {
+            accepted.push((0usize, id.clone()));
         }
-        if let Ok(ref result) = second_result {
-            accepted.push((1usize, result.order_id.clone()));
+        if let Some(ref id) = accepted_second {
+            accepted.push((1usize, id.clone()));
         }
         let success = first_result
             .as_ref()
@@ -418,8 +474,9 @@ impl<'a> HedgedExecutor<'a> {
                 .as_ref()
                 .map(|r| r.filled_stake_cents == legs[1].stake_cents)
                 .unwrap_or(false);
+        let reconciled = reconciled_legs(legs, accepted_first, accepted_second, success);
         if success {
-            return Ok(ExecutionReport {
+            let report = ExecutionReport {
                 classification: ExecutionClassification::LiveFill,
                 venue_order_ids: accepted.into_iter().map(|(_, id)| id).collect(),
                 requested_stake_cents: legs.iter().map(|l| l.stake_cents).sum(),
@@ -427,7 +484,8 @@ impl<'a> HedgedExecutor<'a> {
                 realized_profit_cents: None,
                 settlement_status: "open".into(),
                 reason: None,
-            });
+            };
+            return Ok((report, reconciled));
         }
         if let Ok(result) = first_result {
             first.unwind(&result).map_err(|message| ExecError::Unwind {
@@ -444,7 +502,7 @@ impl<'a> HedgedExecutor<'a> {
                 })?;
         }
         self.risk.release_trade(legs);
-        Ok(ExecutionReport {
+        let report = ExecutionReport {
             classification: ExecutionClassification::LivePhantom,
             venue_order_ids: accepted.into_iter().map(|(_, id)| id).collect(),
             requested_stake_cents: legs.iter().map(|l| l.stake_cents).sum(),
@@ -452,7 +510,77 @@ impl<'a> HedgedExecutor<'a> {
             realized_profit_cents: None,
             settlement_status: "unwound".into(),
             reason: Some("one or more legs rejected or partially filled".into()),
-        })
+        };
+        Ok((report, reconciled))
+    }
+}
+
+/// Per-leg reconciliation view returned by
+/// [`HedgedExecutor::execute_reconciled`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReconciledLeg {
+    /// Idempotency key for this leg.
+    pub client_order_id: [u8; 16],
+    /// Venue receiving the order.
+    pub venue: VenueId,
+    /// Venue order id once accepted.
+    pub venue_order_id: Option<String>,
+    /// Requested stake.
+    pub requested_stake_cents: Cents,
+    /// Filled stake (0 if never accepted).
+    pub filled_stake_cents: Cents,
+    /// `open` (filled, waiting settlement) or `unwound` (rejected/flattened).
+    pub status: String,
+}
+
+/// Build the per-leg reconciliation view, keying by client id so a runner can
+/// match venue invoices without guessing at positional order.
+fn reconciled_legs(
+    legs: &[ExecLeg],
+    accepted_first: Option<String>,
+    accepted_second: Option<String>,
+    filled: bool,
+) -> Vec<ReconciledLeg> {
+    vec![
+        ReconciledLeg {
+            client_order_id: legs[0].client_order_id,
+            venue: legs[0].venue,
+            venue_order_id: accepted_first,
+            requested_stake_cents: legs[0].stake_cents,
+            filled_stake_cents: if filled { legs[0].stake_cents } else { 0 },
+            status: if filled { "open" } else { "unwound" }.into(),
+        },
+        ReconciledLeg {
+            client_order_id: legs[1].client_order_id,
+            venue: legs[1].venue,
+            venue_order_id: accepted_second,
+            requested_stake_cents: legs[1].stake_cents,
+            filled_stake_cents: if filled { legs[1].stake_cents } else { 0 },
+            status: if filled { "open" } else { "unwound" }.into(),
+        },
+    ]
+}
+
+/// Join a scoped adapter thread, collapsing a panic into a venue error
+/// string. A panicking adapter must degrade to a reject/handle leg — never a
+/// process abort on the execution boundary.
+fn join_submit<T>(
+    join: std::thread::ScopedJoinHandle<'_, Result<T, String>>,
+    on_panic: impl FnOnce(String) -> String,
+) -> Result<T, String> {
+    join.join()
+        .map_err(|payload| on_panic(panic_message(payload)))
+        .and_then(|inner| inner)
+}
+
+/// Extract a message from a panic payload (or a generic one) for reporting.
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "unknown panic".to_string()
     }
 }
 
@@ -480,6 +608,32 @@ fn hex_id(id: &[u8; 16]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn micro_live_caps_stake_and_daily_budget() {
+        let env = RiskConfig {
+            max_stake_per_leg_cents: 5_000,
+            max_daily_loss_cents: 50_000,
+            max_open_trades: 1,
+            min_edge_bps: 50,
+            kill_switch: true,
+        };
+        let micro = micro_live_config(env);
+        // Two contracts at any price cannot exceed 200c; the daily budget is
+        // one worst-case leg loss (the whole stake of one leg), never more.
+        assert_eq!(micro.max_stake_per_leg_cents, MICRO_MAX_STAKE_PER_LEG_CENTS);
+        assert_eq!(micro.max_daily_loss_cents, MICRO_MAX_STAKE_PER_LEG_CENTS);
+        assert_eq!(micro.min_edge_bps, 50);
+
+        // An operator who already set tighter caps is never loosened.
+        let tighter = micro_live_config(RiskConfig {
+            max_stake_per_leg_cents: 100,
+            max_daily_loss_cents: 100,
+            ..env
+        });
+        assert_eq!(tighter.max_stake_per_leg_cents, 100);
+        assert_eq!(tighter.max_daily_loss_cents, 100);
+    }
     struct Mock {
         fill: Cents,
         fail_unwind: bool,
@@ -541,5 +695,45 @@ mod tests {
             .unwrap();
         assert_eq!(result.classification, ExecutionClassification::LivePhantom);
         assert_eq!(risk.open_trades, 0);
+    }
+    #[test]
+    fn submits_both_legs_concurrently() {
+        /// An adapter whose `submit` blocks on a 2-party barrier so it cannot
+        /// return until *both* legs have entered the critical section. Under
+        /// the concurrent executor both scoped threads reach the barrier and
+        /// the hedge fills clean; under a sequential executor the first leg
+        /// would wait on the barrier forever (the test hangs rather than
+        /// silently passing a wrong result). That asymmetry is the point.
+        struct BothLock {
+            barrier: std::sync::Arc<std::sync::Barrier>,
+        }
+        impl VenueAdapter for BothLock {
+            fn submit(&self, _leg: &ExecLeg) -> Result<OrderResult, String> {
+                self.barrier.wait();
+                Ok(OrderResult {
+                    order_id: "concurrent".into(),
+                    filled_stake_cents: _leg.stake_cents,
+                })
+            }
+            fn unwind(&self, _: &OrderResult) -> Result<(), String> {
+                Ok(())
+            }
+        }
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let first = BothLock {
+            barrier: std::sync::Arc::clone(&barrier),
+        };
+        let second = BothLock { barrier };
+
+        let cfg = RiskConfig {
+            kill_switch: false,
+            ..RiskConfig::default()
+        };
+        let mut risk = RiskGate::new(cfg, [(1, 1000), (2, 1000)]);
+        let mut ex = HedgedExecutor { risk: &mut risk };
+        let result = ex.execute(100, &[leg(1), leg(2)], &first, &second).unwrap();
+        assert_eq!(result.classification, ExecutionClassification::LiveFill);
+        assert_eq!(result.filled_stake_cents, 200);
     }
 }

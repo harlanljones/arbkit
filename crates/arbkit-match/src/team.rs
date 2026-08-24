@@ -250,17 +250,141 @@ const NFL_PHI: CanonicalTeam = CanonicalTeam::new(
     "Eagles",
 );
 
-// MLB Teams (Selected common representatives)
+// MLB Teams (complete 30-team roster)
+//
+// Codes are the ones Kalshi actually embeds in live KXMLB tickers
+// (`KXMLBGAME-26AUG241840TBDET-TB`), captured from the public markets API —
+// including two-letter codes (AZ, KC, SD, SF, TB) that a fixed 3+3 split can
+// never parse. Full names are Polymarket's exact outcome labels.
+const MLB_AZ: CanonicalTeam = CanonicalTeam::new(
+    Sport::Mlb,
+    "AZ",
+    "Arizona Diamondbacks",
+    "Arizona",
+    "Diamondbacks",
+);
+const MLB_ATL: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "ATL", "Atlanta Braves", "Atlanta", "Braves");
+const MLB_ATH: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "ATH", "Athletics", "Sacramento", "Athletics");
+const MLB_BAL: CanonicalTeam = CanonicalTeam::new(
+    Sport::Mlb,
+    "BAL",
+    "Baltimore Orioles",
+    "Baltimore",
+    "Orioles",
+);
 const MLB_BOS: CanonicalTeam =
     CanonicalTeam::new(Sport::Mlb, "BOS", "Boston Red Sox", "Boston", "Red Sox");
-const MLB_NYY: CanonicalTeam =
-    CanonicalTeam::new(Sport::Mlb, "NYY", "New York Yankees", "New York", "Yankees");
+const MLB_CHC: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "CHC", "Chicago Cubs", "Chicago", "Cubs");
+const MLB_CWS: CanonicalTeam = CanonicalTeam::new(
+    Sport::Mlb,
+    "CWS",
+    "Chicago White Sox",
+    "Chicago",
+    "White Sox",
+);
+const MLB_CIN: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "CIN", "Cincinnati Reds", "Cincinnati", "Reds");
+const MLB_CLE: CanonicalTeam = CanonicalTeam::new(
+    Sport::Mlb,
+    "CLE",
+    "Cleveland Guardians",
+    "Cleveland",
+    "Guardians",
+);
+const MLB_COL: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "COL", "Colorado Rockies", "Colorado", "Rockies");
+const MLB_DET: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "DET", "Detroit Tigers", "Detroit", "Tigers");
+const MLB_HOU: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "HOU", "Houston Astros", "Houston", "Astros");
+const MLB_KC: CanonicalTeam = CanonicalTeam::new(
+    Sport::Mlb,
+    "KC",
+    "Kansas City Royals",
+    "Kansas City",
+    "Royals",
+);
+const MLB_LAA: CanonicalTeam = CanonicalTeam::new(
+    Sport::Mlb,
+    "LAA",
+    "Los Angeles Angels",
+    "Los Angeles",
+    "Angels",
+);
 const MLB_LAD: CanonicalTeam = CanonicalTeam::new(
     Sport::Mlb,
     "LAD",
     "Los Angeles Dodgers",
     "Los Angeles",
     "Dodgers",
+);
+const MLB_MIA: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "MIA", "Miami Marlins", "Miami", "Marlins");
+const MLB_MIL: CanonicalTeam = CanonicalTeam::new(
+    Sport::Mlb,
+    "MIL",
+    "Milwaukee Brewers",
+    "Milwaukee",
+    "Brewers",
+);
+const MLB_MIN: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "MIN", "Minnesota Twins", "Minnesota", "Twins");
+const MLB_NYM: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "NYM", "New York Mets", "New York", "Mets");
+const MLB_NYY: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "NYY", "New York Yankees", "New York", "Yankees");
+const MLB_PHI: CanonicalTeam = CanonicalTeam::new(
+    Sport::Mlb,
+    "PHI",
+    "Philadelphia Phillies",
+    "Philadelphia",
+    "Phillies",
+);
+const MLB_PIT: CanonicalTeam = CanonicalTeam::new(
+    Sport::Mlb,
+    "PIT",
+    "Pittsburgh Pirates",
+    "Pittsburgh",
+    "Pirates",
+);
+const MLB_SD: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "SD", "San Diego Padres", "San Diego", "Padres");
+const MLB_SEA: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "SEA", "Seattle Mariners", "Seattle", "Mariners");
+const MLB_SF: CanonicalTeam = CanonicalTeam::new(
+    Sport::Mlb,
+    "SF",
+    "San Francisco Giants",
+    "San Francisco",
+    "Giants",
+);
+const MLB_STL: CanonicalTeam = CanonicalTeam::new(
+    Sport::Mlb,
+    "STL",
+    "St. Louis Cardinals",
+    "St. Louis",
+    "Cardinals",
+);
+const MLB_TB: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "TB", "Tampa Bay Rays", "Tampa Bay", "Rays");
+const MLB_TEX: CanonicalTeam =
+    CanonicalTeam::new(Sport::Mlb, "TEX", "Texas Rangers", "Texas", "Rangers");
+const MLB_TOR: CanonicalTeam = CanonicalTeam::new(
+    Sport::Mlb,
+    "TOR",
+    "Toronto Blue Jays",
+    "Toronto",
+    "Blue Jays",
+);
+const MLB_WSH: CanonicalTeam = CanonicalTeam::new(
+    Sport::Mlb,
+    "WSH",
+    "Washington Nationals",
+    "Washington",
+    "Nationals",
 );
 
 // NHL Teams (Selected common representatives)
@@ -937,7 +1061,58 @@ static ALIASES: &[AliasMapping] = &[
         alias: "philadelphiaeagles",
         team: &NFL_PHI,
     },
-    // MLB Aliases
+    // MLB Aliases — code, full name, and mascot for every club. Bare city
+    // names are deliberately absent: New York, Chicago, and Los Angeles each
+    // host two clubs, so a city-only label must stay unresolvable rather
+    // than silently pick a franchise.
+    AliasMapping {
+        alias: "az",
+        team: &MLB_AZ,
+    },
+    AliasMapping {
+        alias: "arizonadiamondbacks",
+        team: &MLB_AZ,
+    },
+    AliasMapping {
+        alias: "diamondbacks",
+        team: &MLB_AZ,
+    },
+    AliasMapping {
+        alias: "dbacks",
+        team: &MLB_AZ,
+    },
+    AliasMapping {
+        alias: "atl",
+        team: &MLB_ATL,
+    },
+    AliasMapping {
+        alias: "atlantabraves",
+        team: &MLB_ATL,
+    },
+    AliasMapping {
+        alias: "braves",
+        team: &MLB_ATL,
+    },
+    AliasMapping {
+        alias: "ath",
+        team: &MLB_ATH,
+    },
+    AliasMapping {
+        alias: "athletics",
+        team: &MLB_ATH,
+    },
+    AliasMapping {
+        alias: "bal",
+        team: &MLB_BAL,
+    },
+    AliasMapping {
+        alias: "baltimoreorioles",
+        team: &MLB_BAL,
+    },
+    AliasMapping {
+        alias: "orioles",
+        team: &MLB_BAL,
+    },
     AliasMapping {
         alias: "bos",
         team: &MLB_BOS,
@@ -955,6 +1130,178 @@ static ALIASES: &[AliasMapping] = &[
         team: &MLB_BOS,
     },
     AliasMapping {
+        alias: "chc",
+        team: &MLB_CHC,
+    },
+    AliasMapping {
+        alias: "chicagocubs",
+        team: &MLB_CHC,
+    },
+    AliasMapping {
+        alias: "cubs",
+        team: &MLB_CHC,
+    },
+    AliasMapping {
+        alias: "cws",
+        team: &MLB_CWS,
+    },
+    AliasMapping {
+        alias: "chicagowhitesox",
+        team: &MLB_CWS,
+    },
+    AliasMapping {
+        alias: "whitesox",
+        team: &MLB_CWS,
+    },
+    AliasMapping {
+        alias: "cin",
+        team: &MLB_CIN,
+    },
+    AliasMapping {
+        alias: "cincinnatireds",
+        team: &MLB_CIN,
+    },
+    AliasMapping {
+        alias: "reds",
+        team: &MLB_CIN,
+    },
+    AliasMapping {
+        alias: "cle",
+        team: &MLB_CLE,
+    },
+    AliasMapping {
+        alias: "clevelandguardians",
+        team: &MLB_CLE,
+    },
+    AliasMapping {
+        alias: "guardians",
+        team: &MLB_CLE,
+    },
+    AliasMapping {
+        alias: "col",
+        team: &MLB_COL,
+    },
+    AliasMapping {
+        alias: "coloradorockies",
+        team: &MLB_COL,
+    },
+    AliasMapping {
+        alias: "rockies",
+        team: &MLB_COL,
+    },
+    AliasMapping {
+        alias: "det",
+        team: &MLB_DET,
+    },
+    AliasMapping {
+        alias: "detroittigers",
+        team: &MLB_DET,
+    },
+    AliasMapping {
+        alias: "tigers",
+        team: &MLB_DET,
+    },
+    AliasMapping {
+        alias: "hou",
+        team: &MLB_HOU,
+    },
+    AliasMapping {
+        alias: "houstonastros",
+        team: &MLB_HOU,
+    },
+    AliasMapping {
+        alias: "astros",
+        team: &MLB_HOU,
+    },
+    AliasMapping {
+        alias: "kc",
+        team: &MLB_KC,
+    },
+    AliasMapping {
+        alias: "kansascityroyals",
+        team: &MLB_KC,
+    },
+    AliasMapping {
+        alias: "royals",
+        team: &MLB_KC,
+    },
+    AliasMapping {
+        alias: "laa",
+        team: &MLB_LAA,
+    },
+    AliasMapping {
+        alias: "losangelesangels",
+        team: &MLB_LAA,
+    },
+    AliasMapping {
+        alias: "angels",
+        team: &MLB_LAA,
+    },
+    AliasMapping {
+        alias: "lad",
+        team: &MLB_LAD,
+    },
+    AliasMapping {
+        alias: "losangelesdodgers",
+        team: &MLB_LAD,
+    },
+    AliasMapping {
+        alias: "dodgers",
+        team: &MLB_LAD,
+    },
+    AliasMapping {
+        alias: "ladodgers",
+        team: &MLB_LAD,
+    },
+    AliasMapping {
+        alias: "mia",
+        team: &MLB_MIA,
+    },
+    AliasMapping {
+        alias: "miamimarlins",
+        team: &MLB_MIA,
+    },
+    AliasMapping {
+        alias: "marlins",
+        team: &MLB_MIA,
+    },
+    AliasMapping {
+        alias: "mil",
+        team: &MLB_MIL,
+    },
+    AliasMapping {
+        alias: "milwaukeebrewers",
+        team: &MLB_MIL,
+    },
+    AliasMapping {
+        alias: "brewers",
+        team: &MLB_MIL,
+    },
+    AliasMapping {
+        alias: "min",
+        team: &MLB_MIN,
+    },
+    AliasMapping {
+        alias: "minnesotatwins",
+        team: &MLB_MIN,
+    },
+    AliasMapping {
+        alias: "twins",
+        team: &MLB_MIN,
+    },
+    AliasMapping {
+        alias: "nym",
+        team: &MLB_NYM,
+    },
+    AliasMapping {
+        alias: "newyorkmets",
+        team: &MLB_NYM,
+    },
+    AliasMapping {
+        alias: "mets",
+        team: &MLB_NYM,
+    },
+    AliasMapping {
         alias: "nyy",
         team: &MLB_NYY,
     },
@@ -967,20 +1314,124 @@ static ALIASES: &[AliasMapping] = &[
         team: &MLB_NYY,
     },
     AliasMapping {
-        alias: "lad",
-        team: &MLB_LAD,
+        alias: "phi",
+        team: &MLB_PHI,
     },
     AliasMapping {
-        alias: "dodgers",
-        team: &MLB_LAD,
+        alias: "philadelphiaphillies",
+        team: &MLB_PHI,
     },
     AliasMapping {
-        alias: "losangelesdodgers",
-        team: &MLB_LAD,
+        alias: "phillies",
+        team: &MLB_PHI,
     },
     AliasMapping {
-        alias: "ladodgers",
-        team: &MLB_LAD,
+        alias: "pit",
+        team: &MLB_PIT,
+    },
+    AliasMapping {
+        alias: "pittsburghpirates",
+        team: &MLB_PIT,
+    },
+    AliasMapping {
+        alias: "pirates",
+        team: &MLB_PIT,
+    },
+    AliasMapping {
+        alias: "sd",
+        team: &MLB_SD,
+    },
+    AliasMapping {
+        alias: "sandiegopadres",
+        team: &MLB_SD,
+    },
+    AliasMapping {
+        alias: "padres",
+        team: &MLB_SD,
+    },
+    AliasMapping {
+        alias: "sea",
+        team: &MLB_SEA,
+    },
+    AliasMapping {
+        alias: "seattlemariners",
+        team: &MLB_SEA,
+    },
+    AliasMapping {
+        alias: "mariners",
+        team: &MLB_SEA,
+    },
+    AliasMapping {
+        alias: "sf",
+        team: &MLB_SF,
+    },
+    AliasMapping {
+        alias: "sanfranciscogiants",
+        team: &MLB_SF,
+    },
+    AliasMapping {
+        alias: "giants",
+        team: &MLB_SF,
+    },
+    AliasMapping {
+        alias: "stl",
+        team: &MLB_STL,
+    },
+    AliasMapping {
+        alias: "stlouiscardinals",
+        team: &MLB_STL,
+    },
+    AliasMapping {
+        alias: "cardinals",
+        team: &MLB_STL,
+    },
+    AliasMapping {
+        alias: "tb",
+        team: &MLB_TB,
+    },
+    AliasMapping {
+        alias: "tampabayrays",
+        team: &MLB_TB,
+    },
+    AliasMapping {
+        alias: "rays",
+        team: &MLB_TB,
+    },
+    AliasMapping {
+        alias: "tex",
+        team: &MLB_TEX,
+    },
+    AliasMapping {
+        alias: "texasrangers",
+        team: &MLB_TEX,
+    },
+    AliasMapping {
+        alias: "rangers",
+        team: &MLB_TEX,
+    },
+    AliasMapping {
+        alias: "tor",
+        team: &MLB_TOR,
+    },
+    AliasMapping {
+        alias: "torontobluejays",
+        team: &MLB_TOR,
+    },
+    AliasMapping {
+        alias: "bluejays",
+        team: &MLB_TOR,
+    },
+    AliasMapping {
+        alias: "wsh",
+        team: &MLB_WSH,
+    },
+    AliasMapping {
+        alias: "washingtonnationals",
+        team: &MLB_WSH,
+    },
+    AliasMapping {
+        alias: "nationals",
+        team: &MLB_WSH,
     },
     // NHL Aliases
     AliasMapping {
@@ -1249,6 +1700,57 @@ mod tests {
         assert!(matches!(
             parse_matchup("JustATeamWithoutSeparator", None),
             Err(MatchError::MalformedMatchup(_))
+        ));
+    }
+
+    #[test]
+    fn mlb_roster_resolves_every_live_kalshi_code_and_poly_label() {
+        // Codes exactly as embedded in live KXMLB tickers (public markets
+        // API, Aug 2026), including the two-letter codes a fixed 3+3 split
+        // can never recover.
+        const CODES: [&str; 30] = [
+            "AZ", "ATL", "ATH", "BAL", "BOS", "CHC", "CWS", "CIN", "CLE", "COL", "DET", "HOU",
+            "KC", "LAA", "LAD", "MIA", "MIL", "MIN", "NYM", "NYY", "PHI", "PIT", "SD", "SEA", "SF",
+            "STL", "TB", "TEX", "TOR", "WSH",
+        ];
+        for code in CODES {
+            let team = lookup_team(code, Some(Sport::Mlb))
+                .unwrap_or_else(|e| panic!("code {code} must resolve: {e}"));
+            assert_eq!(team.code, code);
+            assert_eq!(team.sport, Sport::Mlb);
+
+            // Polymarket outcome labels are these exact full names, resolved
+            // without a sport hint on the strict uniqueness path.
+            let labeled = lookup_team_unique(team.full_name)
+                .unwrap_or_else(|e| panic!("label {:?} must be unique: {e}", team.full_name));
+            assert_eq!(labeled.code, code);
+        }
+    }
+
+    #[test]
+    fn mlb_shared_city_labels_stay_unresolvable() {
+        // Two clubs share each of these cities inside MLB alone. No alias may
+        // silently bind a bare city name to one franchise; if the hinted
+        // lookup falls back cross-sport, that is an error upstream code
+        // rejects via the strict uniqueness path, never an MLB guess.
+        for city in ["New York", "Chicago", "Los Angeles"] {
+            if let Ok(team) = lookup_team(city, Some(Sport::Mlb)) {
+                assert_ne!(
+                    team.sport,
+                    Sport::Mlb,
+                    "{city} must not silently resolve to one MLB club"
+                );
+            }
+        }
+        // Mascots owned by exactly one franchise resolve hint-free.
+        assert_eq!(lookup_team_unique("Guardians").unwrap().code, "CLE");
+        assert_eq!(lookup_team_unique("Blue Jays").unwrap().code, "TOR");
+        assert_eq!(lookup_team_unique("Cubs").unwrap().code, "CHC");
+        assert_eq!(lookup_team_unique("White Sox").unwrap().code, "CWS");
+        // City labels shared across leagues stay ambiguous on the strict path.
+        assert!(matches!(
+            lookup_team_unique("Boston"),
+            Err(MatchError::AmbiguousTeam(_))
         ));
     }
 }

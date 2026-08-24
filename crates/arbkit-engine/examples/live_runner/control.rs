@@ -25,9 +25,14 @@ pub enum OperatorCommand {
     SessionStart { mode: String },
     /// Graceful stop through the same shutdown path as a finite run.
     SessionEnd,
-    /// Arm (`engage: true`) or disarm the kill switch. Mirrors
-    /// `RiskConfig::default().kill_switch`, which starts engaged.
-    KillSwitch { engage: bool },
+    /// Arm/`engage: true` or disarm/`engage: false` the kill switch. A
+    /// disarm requires an explicit `confirm: true`; a bare disarm is refused
+    /// by the apply path (mirrors the worker's zod schema).
+    KillSwitch {
+        engage: bool,
+        #[serde(default)]
+        confirm: bool,
+    },
 }
 
 /// Wire envelope from the pull endpoint: monotonic id plus the command.
@@ -86,10 +91,16 @@ mod tests {
     #[test]
     fn parses_every_command_shape_the_worker_admits() {
         let kill = serde_json::from_str::<CommandEnvelope>(
-            r#"{"id":7,"command":{"t":"kill-switch","engage":false}}"#,
+            r#"{"id":7,"command":{"t":"kill-switch","engage":false,"confirm":true}}"#,
         )
         .expect("kill-switch parses");
-        assert_eq!(kill.command, OperatorCommand::KillSwitch { engage: false });
+        assert_eq!(
+            kill.command,
+            OperatorCommand::KillSwitch {
+                engage: false,
+                confirm: true
+            }
+        );
         assert_eq!(kill.id, 7);
 
         let start = serde_json::from_str::<CommandEnvelope>(

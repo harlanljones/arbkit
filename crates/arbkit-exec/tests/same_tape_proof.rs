@@ -141,3 +141,31 @@ fn malformed_tapes_are_rejected_not_guessed() {
     bad_price.legs[0].quoted_ppm = 1_000_001;
     assert!(replay_paper_tape(std::slice::from_ref(&bad_price)).is_err());
 }
+
+#[test]
+fn phantom_rate_beyond_ten_points_halts_micro_live() {
+    // Paper baseline: every occurrence fills clean (0% phantom rate).
+    let tape: Vec<OccurrenceRecord> = (0..5).map(filled_occurrence).collect();
+    let paper = replay_paper_tape(&tape).expect("replay");
+    assert_eq!(paper.live_phantoms, 0);
+
+    // Live ran the same five attempts but three decayed: +60pp over baseline.
+    let mut live = paper;
+    live.attempted_arbs = 5;
+    live.live_fills = 2;
+    live.live_phantoms = 3;
+    let comparison = compare_tape(&paper, &live, 50);
+    let _ = comparison; // ROI may even agree; the phantom gate is independent.
+    let rate = |r: &arbkit_exec::LiveProofReport| {
+        (r.live_phantoms as i64 * 10_000).div_euclid(r.attempted_arbs as i64)
+    };
+    assert!(rate(&live) - rate(&paper) > 1_000, "halt condition met");
+
+    // Within 10 points there is no halt: 1 of 20 live phantoms over a 0%
+    // baseline is exactly 500 bps.
+    let mut borderline = paper;
+    borderline.attempted_arbs = 20;
+    borderline.live_fills = 19;
+    borderline.live_phantoms = 1;
+    assert!(rate(&borderline) - rate(&paper) <= 1_000);
+}

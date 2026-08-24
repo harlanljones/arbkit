@@ -299,3 +299,45 @@ The falsification row is the point: the harness is built to make paper-vs-live
 divergence loud and machine-readable (`exit 1`, `"within_tolerance":false`),
 so a synthetic assumption that fails against real venue behavior is recorded
 as a dated finding rather than absorbed into a wider tolerance.
+
+---
+
+## 9. Live-Readiness Session Log (August 24, 2026)
+
+Dated record of every live-readiness session per the proof protocol's
+reporting rule: negative and falsified outcomes are findings and are listed
+as such, never relabeled.
+
+| Date | Step | Session | Outcome | Key figures |
+|---|---|---|---|---|
+| 2026-08-24 | HJ-146 catalog populate/review | Live REST discovery, both venues, dry-run build | **42 canonical events / 42 validated pairs** built from production APIs; offline fixture test reproduces 41/41 | `events=42 pairs=42`; skips counted, none guessed |
+| 2026-08-24 | HJ-149 credential hygiene | Artifact sweeps + redaction audit, dry-run + unit | No credential material in any runner artifact; `.env.example` blank-pinned | scanner needles ≥8 chars; exit-9 contract |
+| 2026-08-24 | HJ-150 durable risk state | Restart drill (crash → reload → reconcile) | Exact gate/bankroll/policy restore; idempotent settlement by client order id; checkpoint preserved unacknowledged recovery state | `restart_drill` green; unprotected-transmission rollback wired |
+| 2026-08-24 | HJ-151 dry-run warmup | Real-slate warmup, feeds + tape + catalog dump | **74 real Polymarket feed events** captured to tape; warmup ledger clean | `unwind_failures=0 ack_matched=0 in_flight_remaining=0` |
+| 2026-08-24 | HJ-153 runbook rehearsal | Engaged kill-switch live start | Refused as designed | `"live mode refused: ARBKIT_KILL_SWITCH is active"`, exit 3 |
+| 2026-08-24 | HJ-153 runbook rehearsal | Full start/stop cycle with explicit artifact paths | Clean session end; ledger reconciled | `windows=4 attempted=0 unwind_failures=0 in_flight_remaining=0` |
+| 2026-08-24 | HJ-152 micro-live rehearsal | Dry-run with `--micro` caps + proof artifacts + compare | Caps clamped to 200¢/200¢; occurrences + live-proof.json emitted; compare exit 0 (honest zero attempts) | `max_stake_per_leg=200c daily_loss_cap=200c`; phantom-halt exit 2 pinned by test |
+
+**Honest zero:** `attempted=0` on every warmup — no cross-venue signal met
+the 50 bps floor on the real slate during any window. That is the system
+correctly declining to trade, not a pipeline failure; it is recorded so the
+first non-zero attempt has a baseline.
+
+### Falsified assumptions (dated)
+
+Each of these was a fixture-era belief that live data or rehearsal disproved;
+each is fixed with a regression pin, which is why the program found them
+before capital did:
+
+| Date | Belief | Reality | Fix |
+|---|---|---|---|
+| 2026-08-24 | Kalshi event tickers encode `[DD][MMM][YY]` | They encode season-year-first `[YY][MMM][DD][HHMM]`; old fixtures were accidentally palindromic (`26AUG26`) and hid it | Validated decode → canonical `YYYY-MM-DD` (`event_datetime_decodes_year_first`) |
+| 2026-08-24 | `status=open` records are what the markets endpoint returns | Records stamp themselves `status:"active"`; every real moneyline was being dropped as untradable | Both spellings accepted (`parse_kalshi_page`) |
+| 2026-08-24 | Fixed 3+3 team-code split covers MLB | Two-letter codes (AZ, KC, SD, SF, TB) make it unparseable | Variable-length split requiring exactly one valid reading |
+| 2026-08-24 | Feeds were delivering market data in prior smokes | WS client had **no TLS compiled in** — both feeds failed every connect since HJ-144 while smokes looked green | rustls enabled; feed errors now surfaced in evidence |
+| 2026-08-24 | Kalshi market-data socket is readable anonymously | Requires RSA-PSS signed handshake even for read-only books | Feed-side signer + loud 401 without creds |
+
+The August 24 same-tape harness results above (§8) remain the reference for
+the comparison protocol these sessions will use after each micro-live
+session: divergence is machine-readable (`exit 1`,
+`within_tolerance:false`) and gets its own dated row here.

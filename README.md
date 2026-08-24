@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/harlanljones/arbkit/actions/workflows/ci.yml/badge.svg)](https://github.com/harlanljones/arbkit/actions/workflows/ci.yml)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-arbkit.harlanljones.com-0ea5e9?style=flat&logo=cloudflare)](https://arbkit.harlanljones.com/)
-[![Tests](https://img.shields.io/badge/tests-159%20passed-success)](https://arbkit.harlanljones.com/)
+[![Tests](https://img.shields.io/badge/tests-252%20passed-success)](#quickstart--verification)
 [![Rust 1.83+](https://img.shields.io/badge/rust-1.83%2B-orange.svg)](https://www.rust-lang.org/)
 [![Latency](https://img.shields.io/badge/hot%20path%20p99-%3C%20100%20ns-brightgreen)](#performance--simulation-highlights)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
@@ -45,6 +45,7 @@ being equal. Both of those subtractions are the point.
 - [About "Low Latency"](#about-low-latency)
 - [Workspace Layout](#workspace-layout)
 - [Live Trading Integration](LIVE_TRADING.md)
+- [Operator Runbook](RUNBOOK.md)
 - [Quickstart & Verification](#quickstart--verification)
 - [Performance & Simulation Highlights](#performance--simulation-highlights)
 - [Results Dashboard](#results-dashboard)
@@ -67,7 +68,7 @@ A public results ledger and benchmark visualizer is deployed to Cloudflare at **
 
 ## Status & Verification
 
-Complete. All core domain components, venue parsers, canonical matcher, zero-allocation hot loop, latency histogram, and paper-trading execution simulator are implemented, verified across **159 tests**, and benchmarked with 0 warnings. See [RESULTS.md](RESULTS.md) and [ARCHITECTURE.md](ARCHITECTURE.md) for full execution traces and architectural details.
+Complete through **micro-live-ready**. The full pipeline — venue discovery, canonical matching, zero-allocation hot loop, risk-gated concurrent execution against real signed adapters, settlement reconciliation, durable restart-safe state, and same-tape proof tooling — is implemented, verified across **252 tests**, and benchmarked with 0 warnings. Live transmission itself is an explicit operator action behind the kill switch; see [LIVE_TRADING.md](LIVE_TRADING.md), [RUNBOOK.md](RUNBOOK.md), and the dated session log in [RESULTS.md §9](RESULTS.md).
 
 ## What makes this hard
 
@@ -93,7 +94,7 @@ guaranteed no matter which outcome lands. This is where marginal edges die, and
 they die here rather than at the exchange.
 
 **Matching.** The same NBA game is `LAL @ BOS` on one venue, `Boston Celtics vs
-Los Angeles Lakers` on another, and `KXNBAGAME-26AUG18BOSLAL` on Kalshi. Getting
+Los Angeles Lakers` on another, and `KXNBAGAME-26AUG181930BOSLAL` on Kalshi. Getting
 an odds conversion wrong costs basis points; hedging Lakers -3.5 against Celtics
 +3.0 costs the whole stake, and it looks like a healthy arb right until the game
 lands on 3. `detect` cannot check this and does not try — establishing that two
@@ -133,21 +134,23 @@ rounding in that chain manufactures edges that were never quoted.
 
 ## Workspace Layout
 
-The codebase is organized into five focused crates enforcing strict separation of concerns and zero-allocation hot paths:
+The codebase is organized into six focused crates enforcing strict separation of concerns and zero-allocation hot paths:
 
 ```
 crates/arbkit-core     prices, books, fees, detection. no I/O, no clock, no network.
-crates/arbkit-match    canonical event registry, team normalizer, string-to-ID interning.
-crates/arbkit-feed     Polymarket and Kalshi parsers, binary tape recorder and player.
+crates/arbkit-match    canonical event registry, live ticker/team parsing, venue catalog gate.
+crates/arbkit-feed     Kalshi/Polymarket WS feeds + REST discovery, binary tape recorder and player.
 crates/arbkit-engine   lock-free SPSC ring buffers, preallocated book slab, hot loop, latency histogram.
 crates/arbkit-sim      paper trading simulator, latency modeling, phantom-rate measurement.
+crates/arbkit-exec     risk gate, hedged executor, signed venue adapters, durable state, proof tooling.
 ```
 
 - [`arbkit-core`](crates/arbkit-core): domain core and detector. Depends only on `thiserror`.
-- [`arbkit-match`](crates/arbkit-match): canonical event registry, team alias normalizer, and zero-allocation hot lookup.
-- [`arbkit-feed`](crates/arbkit-feed): wire message parsers (Kalshi, Polymarket CLOB) and binary tape codec.
+- [`arbkit-match`](crates/arbkit-match): canonical event registry, team alias table built from live venue identifiers (year-first Kalshi tickers, two-letter MLB codes), and the `validate_binary_pair` catalog gate.
+- [`arbkit-feed`](crates/arbkit-feed): reconnecting WebSocket feeds with signed market-data auth, REST cross-venue discovery, and the binary tape codec.
 - [`arbkit-engine`](crates/arbkit-engine): lock-free SPSC queues, preallocated flat book slab, and single-threaded hot loop.
 - [`arbkit-sim`](crates/arbkit-sim): execution simulator accounting for queue front-running, wire transit, and phantom rates.
+- [`arbkit-exec`](crates/arbkit-exec): `RiskGate`, concurrent `HedgedExecutor`, authenticated Kalshi/Polymarket adapters, `RiskStateStore` crash recovery, secret hygiene scanning, and the same-tape proof harness.
 
 ## Quickstart & Verification
 
@@ -160,8 +163,11 @@ cargo fmt --all --check
 # Clippy with all targets and features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-# Run all 159 unit, property, and integration tests
-cargo test --workspace
+# Run all unit, property, and integration tests
+cargo test --workspace --all-features
+
+# Example-level suites (not covered by plain cargo test):
+cargo test -p arbkit-engine --example live_runner
 
 # Check documentation builds cleanly
 cargo doc --workspace --all-features --no-deps

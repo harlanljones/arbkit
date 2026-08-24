@@ -6,10 +6,13 @@ Cross-venue sports arbitrage detection. See `README.md` for what it does and
 ## Layout
 
 - `crates/arbkit-core` — prices, books, fees, arbitrage detection. **No I/O, ever.**
-- `crates/arbkit-match` — canonical event registry, team alias normalizer, string interning.
-- `crates/arbkit-feed` — venue connectors (Kalshi, Polymarket CLOB), binary tape recorder/player.
+- `crates/arbkit-match` — canonical event registry, live ticker/team parsing (year-first Kalshi tickers, full MLB code table), venue catalog gate.
+- `crates/arbkit-feed` — venue connectors (Kalshi WS with signed market-data auth, Polymarket CLOB), REST cross-venue discovery, binary tape recorder/player.
 - `crates/arbkit-engine` — lock-free SPSC ring, flat slab, hot loop, sub-microsecond latency histogram.
 - `crates/arbkit-sim` — paper trading simulator, queue front-running, phantom rate analytics.
+- `crates/arbkit-exec` — `RiskGate`, concurrent `HedgedExecutor`, signed venue adapters, `RiskStateStore` crash recovery, secret-hygiene scanning, same-tape proof harness; `examples/prod_trader.rs` is the assembled live runner.
+
+Operations: `RUNBOOK.md`. Program evidence: `GATES.md` and `RESULTS.md` §9.
 
 ## Hot path rules
 
@@ -56,8 +59,11 @@ catch, which is why `detection_is_total` is a property test.
 
 ```
 cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+cargo test -p arbkit-engine --example live_runner
+npm --prefix dashboard test -- --run
+npm --prefix dashboard run typecheck:worker
 cargo run --example pipeline --release
 ```
 

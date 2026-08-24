@@ -16,7 +16,7 @@ fn test_kalshi_full_lifecycle_and_sequence_tracking() {
         "type": "orderbook_snapshot",
         "seq": 1000,
         "msg": {
-            "market_ticker": "KXNBAGAME-26AUG18BOSLAL",
+            "market_ticker": "KXNBAGAME-26AUG181930BOSLAL",
             "yes": [[52, 100], [53, 250], [55, 500]],
             "no": [[47, 80], [45, 200]],
             "ts": 1700000000000
@@ -40,7 +40,7 @@ fn test_kalshi_full_lifecycle_and_sequence_tracking() {
         "type": "orderbook_delta",
         "seq": 1001,
         "msg": {
-            "market_ticker": "KXNBAGAME-26AUG18BOSLAL",
+            "market_ticker": "KXNBAGAME-26AUG181930BOSLAL",
             "price": 54,
             "delta": 300,
             "side": "yes",
@@ -71,7 +71,7 @@ fn test_kalshi_full_lifecycle_and_sequence_tracking() {
         "type": "trade",
         "seq": 1002,
         "msg": {
-            "market_ticker": "KXNBAGAME-26AUG18BOSLAL",
+            "market_ticker": "KXNBAGAME-26AUG181930BOSLAL",
             "yes_price": 54,
             "count": 50,
             "taker_side": "yes",
@@ -97,7 +97,7 @@ fn test_kalshi_full_lifecycle_and_sequence_tracking() {
         "type": "orderbook_delta",
         "seq": 1005,
         "msg": {
-            "market_ticker": "KXNBAGAME-26AUG18BOSLAL",
+            "market_ticker": "KXNBAGAME-26AUG181930BOSLAL",
             "price": 54,
             "delta": 0,
             "side": "yes"

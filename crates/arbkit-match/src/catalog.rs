@@ -130,11 +130,70 @@ pub fn parse_poly_token_id(value: &str) -> Result<[u8; 32]> {
     Ok(out)
 }
 
+/// Render the fixed-width wire form back to the decimal string Gamma serves.
+///
+/// The catalog dump is for operators verifying mappings by hand against the
+/// venue, so it must show exactly the identifiers Polymarket publishes.
+/// Repeated division by 10 over big-endian bytes — integer-only, matching
+/// [`parse_poly_token_id`], which this round-trips.
+pub fn poly_token_id_to_decimal(token: &[u8; 32]) -> String {
+    // Copy into 64-bit limbs (big-endian) so division works in chunks.
+    let mut limbs = [0u64; 4];
+    for (i, limb) in limbs.iter_mut().enumerate() {
+        let bytes: [u8; 8] = token[i * 8..(i + 1) * 8].try_into().unwrap();
+        *limb = u64::from_be_bytes(bytes);
+    }
+
+    // Repeated division by 1e19 yields base-1e19 digits, lowest first. The
+    // most significant chunk prints without padding.
+    const DIVISOR: u64 = 10_000_000_000_000_000_000;
+    let mut chunks: Vec<String> = Vec::with_capacity(5);
+    loop {
+        let mut rem = 0u64;
+        for limb in limbs.iter_mut() {
+            let cur = (u128::from(rem) << 64) | u128::from(*limb);
+            *limb = (cur / u128::from(DIVISOR)) as u64;
+            rem = (cur % u128::from(DIVISOR)) as u64;
+        }
+        if limbs.iter().all(|&l| l == 0) {
+            if rem == 0 && chunks.is_empty() {
+                chunks.push("0".to_string());
+            } else {
+                chunks.push(rem.to_string());
+            }
+            break;
+        }
+        chunks.push(format!("{rem:019}"));
+    }
+
+    chunks.reverse();
+    chunks.concat()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::alignment::OutcomeSide;
     use arbkit_core::MarketKind;
+
+    #[test]
+    fn token_decimal_round_trips_through_wire_form() {
+        // A real Gamma token id captured in the feed fixtures.
+        let decimal =
+            "52222696630142282340910360142526626600364417636157306499739927226918483751010";
+        let wire = parse_poly_token_id(decimal).unwrap();
+        assert_eq!(poly_token_id_to_decimal(&wire), decimal);
+
+        // Zero and small values render without padding artifacts.
+        assert_eq!(poly_token_id_to_decimal(&[0u8; 32]), "0");
+        let small = parse_poly_token_id("42").unwrap();
+        assert_eq!(poly_token_id_to_decimal(&small), "42");
+
+        // The maximum u256 renders exactly.
+        let max = [0xffu8; 32];
+        let rendered = poly_token_id_to_decimal(&max);
+        assert_eq!(parse_poly_token_id(&rendered).unwrap(), max);
+    }
 
     fn instrument(venue: VenueId, outcome_id: OutcomeId) -> VenueInstrument {
         VenueInstrument {

@@ -12,7 +12,8 @@ import { useCallback, useRef, useState } from "react";
 export type OperatorCommand =
   | { t: "session-start"; mode: "paper" | "live" }
   | { t: "session-end" }
-  | { t: "kill-switch"; engage: boolean };
+  | { t: "kill-switch"; engage: true }
+  | { t: "kill-switch"; engage: false; confirm: true };
 
 export type OperatorSendResult =
   | { ok: true; queuedId: number }

@@ -669,7 +669,18 @@ fn main() {
                 for envelope in envelopes {
                     last_command_id = last_command_id.max(envelope.id);
                     match envelope.command {
-                        OperatorCommand::KillSwitch { engage } => {
+                        OperatorCommand::KillSwitch { engage, confirm } => {
+                            // A disarming command without an explicit
+                            // confirmation is refused: the console's checkbox
+                            // and the worker's zod schema both require it, so
+                            // this is a final independent guard.
+                            if !engage && !confirm {
+                                eprintln!(
+                                    "[control] REFUSED disarm command #{} (no explicit confirmation)",
+                                    envelope.id
+                                );
+                                continue;
+                            }
                             if kill_switch_engaged != engage {
                                 kill_switch_engaged = engage;
                                 println!(

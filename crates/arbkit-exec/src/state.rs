@@ -169,6 +169,19 @@ impl RiskStateStore {
         self.save(&state)?;
         Ok(state)
     }
+
+    /// Remove a settled or unwound order from the crash-recovery set once
+    /// its terminal fill has been applied exactly once. Without this a
+    /// healthy session would leave every settled order behind and a restart
+    /// would refuse live mode over ghosts.
+    pub fn clear_inflight(&self, client_order_id: [u8; 16]) -> Result<DurableRiskState, String> {
+        let mut state = self.load()?;
+        state
+            .in_flight
+            .retain(|order| order.client_order_id != client_order_id);
+        self.save(&state)?;
+        Ok(state)
+    }
 }
 
 /// Fixed-window limiter for outbound venue requests.

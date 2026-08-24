@@ -398,17 +398,26 @@ describe("PositionRoom operator commands", () => {
     const { room } = makeRoom();
 
     // Every acceptance and rejection path the ticket pins: unknown tag,
-    // wrong mode, non-boolean engage.
+    // wrong mode, non-boolean engage, unconfirmed disarm.
     expect(operatorCommandSchema.safeParse({ t: "kill-switch", engage: true }).success).toBe(
       true,
     );
+    expect(
+      operatorCommandSchema.safeParse({ t: "kill-switch", engage: false, confirm: true }).success,
+    ).toBe(true);
     expect(operatorCommandSchema.safeParse({ t: "self-destruct" }).success).toBe(false);
     expect(
       operatorCommandSchema.safeParse({ t: "session-start", mode: "yolo" }).success,
     ).toBe(false);
     expect(operatorCommandSchema.safeParse({ t: "kill-switch", engage: 1 }).success).toBe(false);
+    expect(operatorCommandSchema.safeParse({ t: "kill-switch", engage: false }).success).toBe(
+      false,
+    );
 
-    const first = await postCommand(room, JSON.stringify({ t: "kill-switch", engage: false }));
+    const first = await postCommand(
+      room,
+      JSON.stringify({ t: "kill-switch", engage: false, confirm: true }),
+    );
     expect(first.status).toBe(202);
     expect(await first.json()).toMatchObject({ queued: 1 });
 
@@ -440,7 +449,7 @@ describe("PositionRoom operator commands", () => {
     const empty = await room.fetch(new Request(PULL_URL));
     expect(empty.status).toBe(204);
 
-    await postCommand(room, JSON.stringify({ t: "kill-switch", engage: false }));
+    await postCommand(room, JSON.stringify({ t: "kill-switch", engage: false, confirm: true }));
     await postCommand(room, JSON.stringify({ t: "kill-switch", engage: true }));
 
     const all = await room.fetch(new Request(`${PULL_URL}?afterId=0`));
@@ -448,7 +457,7 @@ describe("PositionRoom operator commands", () => {
     expect(all.headers.get("content-type")).toContain("application/x-ndjson");
     const lines = (await all.text()).trim().split("\n").map((line) => JSON.parse(line));
     expect(lines).toEqual([
-      { id: 1, command: { t: "kill-switch", engage: false } },
+      { id: 1, command: { t: "kill-switch", engage: false, confirm: true } },
       { id: 2, command: { t: "kill-switch", engage: true } },
     ]);
 

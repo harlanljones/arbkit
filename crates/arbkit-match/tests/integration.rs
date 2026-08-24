@@ -69,16 +69,16 @@ fn test_matchup_parsing() {
 #[test]
 fn test_kalshi_ticker_parsing() {
     // Moneyline ticker
-    let t1 = parse_kalshi_ticker("KXNBAGAME-26AUG18BOSLAL-BOS").unwrap();
+    let t1 = parse_kalshi_ticker("KXNBAGAME-26AUG181930BOSLAL-BOS").unwrap();
     assert_eq!(t1.sport, Sport::Nba);
-    assert_eq!(t1.date_code, "26AUG18");
+    assert_eq!(t1.date_code, "2026-08-18");
     assert_eq!(t1.matchup.away.code, "BOS");
     assert_eq!(t1.matchup.home.code, "LAL");
     assert_eq!(t1.market_kind, Some(MarketKind::Moneyline));
     assert_eq!(t1.target_team.unwrap().code, "BOS");
 
     // Spread ticker
-    let t2 = parse_kalshi_ticker("KXNBASPREAD-26AUG18BOSLAL-BOS35").unwrap();
+    let t2 = parse_kalshi_ticker("KXNBASPREAD-26AUG181930BOSLAL-BOS35").unwrap();
     assert_eq!(t2.sport, Sport::Nba);
     assert_eq!(t2.target_team.unwrap().code, "BOS");
     // BOS is away, so BOS +3.5 mirrors to Home (LAL) -3.5 => Line(-350)
@@ -88,7 +88,7 @@ fn test_kalshi_ticker_parsing() {
     );
 
     // Total ticker
-    let t3 = parse_kalshi_ticker("KXNBATOTAL-26AUG18BOSLAL-2205O").unwrap();
+    let t3 = parse_kalshi_ticker("KXNBATOTAL-26AUG181930BOSLAL-2205O").unwrap();
     assert_eq!(t3.sport, Sport::Nba);
     assert_eq!(t3.is_over, Some(true));
     assert_eq!(
@@ -147,10 +147,10 @@ fn test_canonical_registry_cross_venue_setup() {
     let mut registry = CanonicalRegistry::new();
 
     let bos_outcome = registry
-        .register_kalshi_ticker("KXNBAGAME-26AUG18BOSLAL-BOS")
+        .register_kalshi_ticker("KXNBAGAME-26AUG181930BOSLAL-BOS")
         .unwrap();
     let lal_outcome = registry
-        .register_kalshi_ticker("KXNBAGAME-26AUG18BOSLAL-LAL")
+        .register_kalshi_ticker("KXNBAGAME-26AUG181930BOSLAL-LAL")
         .unwrap();
 
     let market_id = registry.get_outcome(bos_outcome).unwrap().market_id;
@@ -166,7 +166,7 @@ fn test_canonical_registry_cross_venue_setup() {
 
     // Feed boundary symbol lookups
     assert_eq!(
-        registry.resolve_venue_outcome(VenueRegistry::KALSHI, "KXNBAGAME-26AUG18BOSLAL-BOS"),
+        registry.resolve_venue_outcome(VenueRegistry::KALSHI, "KXNBAGAME-26AUG181930BOSLAL-BOS"),
         Some(bos_outcome)
     );
     assert_eq!(

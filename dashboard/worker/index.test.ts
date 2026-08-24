@@ -73,7 +73,7 @@ async function postCommand(
     new Request(COMMAND_URL, {
       method: "POST",
       headers,
-      body: JSON.stringify({ t: "kill-switch", engage: false }),
+      body: JSON.stringify({ t: "kill-switch", engage: false, confirm: true }),
     }),
     env,
     {} as CtxShape,

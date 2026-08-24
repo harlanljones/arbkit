@@ -28,7 +28,7 @@ pub struct CanonicalEvent {
     pub home: &'static CanonicalTeam,
     /// Canonical away team.
     pub away: &'static CanonicalTeam,
-    /// Optional date identifier string (e.g. "26AUG18").
+    /// Optional date identifier string (e.g. "2026-08-18").
     pub date_code: Option<String>,
 }
 
@@ -447,7 +447,7 @@ mod tests {
         let bos = lookup_team("Boston Celtics", Some(Sport::Nba)).unwrap();
         let lal = lookup_team("Los Angeles Lakers", Some(Sport::Nba)).unwrap();
 
-        let event_id = registry.create_event("BOS @ LAL", Sport::Nba, lal, bos, Some("26AUG18"));
+        let event_id = registry.create_event("BOS @ LAL", Sport::Nba, lal, bos, Some("2026-08-18"));
         let (market_id, home_ml, away_ml) = registry.create_moneyline_market(event_id).unwrap();
 
         assert_eq!(market_id, 0);
@@ -480,10 +480,10 @@ mod tests {
         let mut registry = CanonicalRegistry::new();
 
         let bos_outcome = registry
-            .register_kalshi_ticker("KXNBAGAME-26AUG18BOSLAL-BOS")
+            .register_kalshi_ticker("KXNBAGAME-26AUG181930BOSLAL-BOS")
             .unwrap();
         let lal_outcome = registry
-            .register_kalshi_ticker("KXNBAGAME-26AUG18BOSLAL-LAL")
+            .register_kalshi_ticker("KXNBAGAME-26AUG181930BOSLAL-LAL")
             .unwrap();
 
         let hot_table = registry.build_hot_lookup_table();

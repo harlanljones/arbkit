@@ -13,7 +13,9 @@ mod kalshi;
 mod polymarket;
 
 #[cfg(feature = "live")]
-pub use bridge::{crossbeam_bridge, FeedEventReceiver, FeedEventSender, MpscFeedBridge};
+pub use bridge::{
+    crossbeam_bridge, spawn_ring_bridge, FeedEventReceiver, FeedEventSender, MpscFeedBridge,
+};
 #[cfg(feature = "live")]
 pub use discovery::{
     build_catalog_generation, discover_kalshi_markets, discover_polymarket_propositions,

@@ -119,7 +119,7 @@ export function OperatorConsole({
             type="button"
             onClick={() => {
               setDisarmConfirmed(false);
-              void operator.send({ t: "kill-switch", engage: false });
+              void operator.send({ t: "kill-switch", engage: false, confirm: true });
             }}
             disabled={disarmDisabled}
           >

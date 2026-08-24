@@ -134,10 +134,11 @@ describe("OperatorConsole", () => {
   });
 
   it("disables disarm until explicitly confirmed, and arm once already armed", () => {
+    const operator = fakeOperator();
     render(
       <OperatorConsole
         live={liveState({ connection: "open", sessionStatus: "live", risk: ENGAGED_LIVE })}
-        operator={fakeOperator()}
+        operator={operator}
       />,
     );
 
@@ -145,6 +146,8 @@ describe("OperatorConsole", () => {
     expect(disarm).toBeDisabled();
     fireEvent.click(screen.getByLabelText(/Confirm disarming/));
     expect(disarm).toBeEnabled();
+    fireEvent.click(disarm);
+    expect(operator.commands).toEqual([{ t: "kill-switch", engage: false, confirm: true }]);
 
     // The runner already reports engaged, so arming again is a no-op request
     // the console refuses to spend a command on.

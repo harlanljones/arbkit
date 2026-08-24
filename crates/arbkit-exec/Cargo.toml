@@ -11,11 +11,18 @@ description = "Explicitly gated live and dry-run execution for arbkit"
 default = []
 live = ["dep:reqwest", "dep:rsa", "dep:sha2", "dep:base64", "dep:rand", "dep:hmac", "dep:k256"]
 paper-replay = ["dep:arbkit-sim"]
+runner = [
+    "live",
+    "dep:arbkit-feed",
+    "arbkit-feed/live",
+    "dep:ureq",
+]
 
 [dependencies]
 arbkit-core = { path = "../arbkit-core" }
 arbkit-match = { path = "../arbkit-match" }
 arbkit-engine = { path = "../arbkit-engine" }
+arbkit-feed = { path = "../arbkit-feed", optional = true }
 arbkit-sim = { path = "../arbkit-sim", optional = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
@@ -28,6 +35,10 @@ base64 = { version = "0.22", optional = true }
 rand = { version = "0.8", optional = true }
 hmac = { version = "0.12", optional = true }
 k256 = { version = "0.13", features = ["ecdsa", "sha256"], optional = true }
+# Production runner only (example-level): sync HTTP client for the ingest
+# stream and operator command pull. Example code sits outside src/, so no
+# library target and never the hot path sees this.
+ureq = { version = "2", default-features = false, features = ["tls"], optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
@@ -35,3 +46,9 @@ proptest = { workspace = true }
 [[example]]
 name = "same_tape_proof"
 required-features = ["paper-replay"]
+
+[[example]]
+name = "prod_trader"
+# The runner emits occurrence tapes + live proof reports for same-tape
+# comparison, so the paper-replay types come along.
+required-features = ["runner", "paper-replay"]

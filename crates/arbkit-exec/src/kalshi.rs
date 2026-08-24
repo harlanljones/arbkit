@@ -455,15 +455,30 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let response =
-                "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            stream.write_all(response.as_bytes()).unwrap();
+            // A client under parallel load may open more than one connection
+            // (retries, speculation), so answer every one. Each request is
+            // drained first: writing the response before the client finished
+            // sending lets an early close surface as a transport error
+            // instead of the intended status. Detached: the request below is
+            // synchronous, and joining an endless accept loop would hang the
+            // suite.
+            for stream in listener.incoming().flatten() {
+                let mut stream = stream;
+                let response =
+                    "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let mut buf = [0u8; 4096];
+                if std::io::Read::read(&mut stream, &mut buf).is_err() {
+                    break;
+                }
+                if stream.write_all(response.as_bytes()).is_err() {
+                    break;
+                }
+            }
         });
 
         let adapter = adapter_with_base(&format!("http://{address}"));
         let error = adapter.balance_cents().unwrap_err();
         assert!(matches!(error, KalshiError::Api { status: 401, .. }));
-        server.join().unwrap();
+        drop(server);
     }
 }

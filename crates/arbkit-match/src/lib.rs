@@ -1,7 +1,7 @@
 //! Canonical event and market registry, team normalization, and zero-allocation hot-path matching.
 //!
 //! This crate is the alignment core of `arbkit`: it takes disparate venue-specific identifiers
-//! (such as Kalshi tickers `"KXNBAGAME-26AUG18BOSLAL"`, Polymarket CLOB tokens, and sportsbook
+//! (such as Kalshi tickers `"KXNBAGAME-26AUG181930BOSLAL"`, Polymarket CLOB tokens, and sportsbook
 //! names like `"Boston Celtics vs Los Angeles Lakers"`) and maps them onto canonical [`MarketId`]
 //! and [`OutcomeId`] handles.
 //!
@@ -32,7 +32,10 @@ pub use alignment::{
     align_moneyline, align_spread, align_total, validate_binary_pair, OutcomeSide,
 };
 pub use arbkit_core::{Line, MarketId, MarketKind, OutcomeId, VenueId};
-pub use catalog::{parse_poly_token_id, VenueInstrument, VenueInstrumentMap, VenueInstrumentPair};
+pub use catalog::{
+    parse_poly_token_id, poly_token_id_to_decimal, VenueInstrument, VenueInstrumentMap,
+    VenueInstrumentPair,
+};
 pub use error::{MatchError, Result};
 pub use intern::{StringInterner, VenueRegistry};
 pub use kalshi::{parse_kalshi_ticker, KalshiTicker};

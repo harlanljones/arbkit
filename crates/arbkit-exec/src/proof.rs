@@ -125,6 +125,66 @@ pub struct OccurrenceRecord {
     pub legs: Vec<OccurrenceLeg>,
 }
 
+/// Freeze a detection-time occurrence record from the engine signal event
+/// and the resolved execution legs.
+///
+/// Plan entries pair with legs by the venue and outcome embedded in each
+/// leg's client order id (bytes 4..6 / 6..10), consuming legs in order so
+/// multi-level chunks on one outcome stay aligned. Unresolved plan entries —
+/// which never reach execution — simply contribute no leg.
+#[cfg(feature = "paper-replay")]
+pub fn occurrence_record(
+    seq: u64,
+    signal: &arbkit_engine::SignalEvent,
+    legs: &[crate::ExecLeg],
+) -> OccurrenceRecord {
+    let mut remaining = legs.iter().collect::<Vec<_>>();
+    let mut next_leg = |venue: u16, outcome: u32| -> Option<crate::ExecLeg> {
+        let index = remaining.iter().position(|leg| {
+            leg.venue == venue && leg.client_order_id[6..10] == outcome.to_le_bytes()
+        })?;
+        Some(remaining.remove(index).clone())
+    };
+
+    OccurrenceRecord {
+        seq,
+        detection_timestamp_ns: signal.ingest_timestamp_ns,
+        edge_bps: signal.signal.profit_bps,
+        worst_case_profit_cents: signal.signal.worst_case_profit,
+        legs: signal.plan[..signal.plan_len as usize]
+            .iter()
+            .filter_map(|plan_leg| {
+                let exec = next_leg(plan_leg.venue, plan_leg.outcome)?;
+                let fee_bps_stake = match plan_leg.fee {
+                    arbkit_core::Fee::StakeFeeBps(bps) => bps,
+                    // Commission-style fees do not map onto the stake-fee
+                    // field; current venues quote stake fees, and a mismatch
+                    // would surface as paper/live divergence in the proof
+                    // comparison rather than hide.
+                    _ => 0,
+                };
+                let quoted_ppm = plan_leg.quoted.ppm();
+                // Parity convention: the paper side assumes the detected
+                // quote is still resting on arrival, so divergence measured
+                // later is purely live-side.
+                let payout_cents = (exec.stake_cents * 1_000_000) / i64::from(quoted_ppm);
+                Some(OccurrenceLeg {
+                    venue: plan_leg.venue,
+                    outcome: plan_leg.outcome,
+                    quoted_ppm,
+                    fee_bps_stake,
+                    capacity_cents: plan_leg.capacity,
+                    increment_cents: plan_leg.increment,
+                    stake_cents: exec.stake_cents,
+                    payout_cents,
+                    arrival_price_ppm: Some(quoted_ppm),
+                    arrival_depth_cents: plan_leg.capacity,
+                })
+            })
+            .collect(),
+    }
+}
+
 /// Replay an occurrence tape through the paper simulator and reduce it to a
 /// [`LiveProofReport`], directly comparable against the live artifact for the
 /// same tape.

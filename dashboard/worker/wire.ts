@@ -61,10 +61,20 @@ export const operatorCommandSchema = z.discriminatedUnion("t", [
   z.object({
     t: z.literal("session-end"),
   }),
-  z.object({
-    t: z.literal("kill-switch"),
-    engage: z.boolean(),
-  }),
+  // Arming is unconditional; disarming has no effect on resting capital and
+  // so requires an explicit confirmation. A bare disarm (no `confirm`) is
+  // rejected at the worker edge, so a buggy client cannot bypass the console's
+  // checkbox. The runner independently refuses an unconfirmed disarm too.
+  z
+    .object({
+      t: z.literal("kill-switch"),
+      engage: z.boolean(),
+      confirm: z.literal(true).optional(),
+    })
+    .refine(
+      (command) => command.engage || command.confirm === true,
+      "disarming the kill switch requires an explicit confirmation",
+    ),
 ]);
 
 export type OperatorCommand = z.infer<typeof operatorCommandSchema>;
