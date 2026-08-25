@@ -252,6 +252,9 @@ describe("PositionRoom ingest", () => {
           availableCents: 900_001,
           attempted: 44,
           capitalShort: 3,
+          unwindFailures: 1,
+          ackMatched: 42,
+          inFlightRemaining: 2,
         }),
       ].join("\n"),
     );
@@ -260,7 +263,64 @@ describe("PositionRoom ingest", () => {
     expect(totalsPush.windowsCompleted).toBe(3);
     expect(totalsPush.seqCursor).toBe(41);
     expect(totalsPush.capital).toEqual({ lockedCents: 99_999, availableCents: 900_001 });
-    expect(totalsPush.funnel).toMatchObject({ attempted: 44, capitalShort: 3 });
+    expect(totalsPush.funnel).toMatchObject({
+      attempted: 44,
+      capitalShort: 3,
+      unwindFailures: 1,
+      ackMatched: 42,
+      inFlightRemaining: 2,
+    });
+  });
+
+  it("keeps micro-live counters absent from the funnel until a runner reports them", async () => {
+    const { room } = makeRoom();
+    const viewer = connectViewerSync(room);
+
+    // A stats frame without the micro-live counters (e.g. a paper runner)
+    // must not invent them as zeros.
+    await ingest(
+      room,
+      [
+        sessionStartFrame("run-1"),
+        wireFrame({
+          t: "stats",
+          seqCursor: 5,
+          windowsCompleted: 1,
+          lockedCents: null,
+          availableCents: 900_000,
+          attempted: 7,
+          capitalShort: 0,
+        }),
+      ].join("\n"),
+    );
+
+    const totalsPush = viewer.frames().at(-1)!;
+    const funnel = totalsPush.funnel as Record<string, unknown>;
+    expect(funnel.attempted).toBe(7);
+    expect(funnel.unwindFailures).toBeUndefined();
+    expect(funnel.ackMatched).toBeUndefined();
+    expect(funnel.inFlightRemaining).toBeUndefined();
+  });
+
+  it("rejects non-integer micro-live counters in stats frames", async () => {
+    const { room } = makeRoom();
+    const response = await ingest(
+      room,
+      `${sessionStartFrame("run-1")}\n${JSON.stringify({
+        t: "stats",
+        seqCursor: 1,
+        windowsCompleted: 1,
+        lockedCents: null,
+        availableCents: 900_000,
+        attempted: 2,
+        capitalShort: 0,
+        unwindFailures: 0.5,
+      })}`,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: expect.stringContaining("failed schema validation"),
+    });
   });
 });
 

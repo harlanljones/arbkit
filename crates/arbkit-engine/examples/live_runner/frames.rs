@@ -135,6 +135,16 @@ pub enum LiveFrame {
         available_cents: Option<i64>,
         attempted: u64,
         capital_short: u64,
+        /// Micro-live execution counters. Zero on the paper runner — its
+        /// settlement is instantaneous, so nothing is ever in flight, nothing
+        /// can fail to unwind, and acks are trivially matched. Present so the
+        /// wire contract has exactly one shape.
+        #[allow(dead_code)]
+        unwind_failures: u64,
+        #[allow(dead_code)]
+        ack_matched: u64,
+        #[allow(dead_code)]
+        in_flight_remaining: usize,
     },
     /// Liveness proof between batches. The dashboard marks a session stale
     /// when these stop arriving; there is no graceful-shutdown channel.

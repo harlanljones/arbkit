@@ -19,6 +19,20 @@ export type OperatorSendResult =
   | { ok: true; queuedId: number }
   | { ok: false; error: string };
 
+/** One audited command this console sent, newest-first in the log. A refusal
+ * carries the worker's verbatim reason — refusals are evidence, not noise.
+ * Whether a queued command took effect is deliberately absent: only the
+ * runner's own `risk`/session frames prove that, and the audit trail derives
+ * it from the live stream at render time rather than storing a guess. */
+export interface CommandAuditEntry {
+  /** Worker-assigned queue id; null when refused before queueing. */
+  id: number | null;
+  command: OperatorCommand;
+  sentAtMs: number;
+  status: "refused" | "queued";
+  error?: string;
+}
+
 export interface OperatorController {
   send: (command: OperatorCommand) => Promise<OperatorSendResult>;
   /** A POST is on the wire. Commands are one-at-a-time so the console can
@@ -27,7 +41,13 @@ export interface OperatorController {
   lastError: string | null;
   lastQueuedAtMs: number | null;
   lastQueuedId: number | null;
+  /** Newest-first record of every command this console sent that reached
+   * the worker, refused or queued. */
+  auditLog: CommandAuditEntry[];
 }
+
+/** Recent commands retained for the audit trail. */
+const MAX_AUDIT_ENTRIES = 24;
 
 function defaultOperatorUrl(): string {
   if (typeof window === "undefined") return "/api/live/command";
@@ -40,11 +60,20 @@ export function useOperator(url?: string): OperatorController {
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastQueuedAtMs, setLastQueuedAtMs] = useState<number | null>(null);
   const [lastQueuedId, setLastQueuedId] = useState<number | null>(null);
+  const [auditLog, setAuditLog] = useState<CommandAuditEntry[]>([]);
   const inFlight = useRef(false);
+
+  const audit = useCallback((entry: CommandAuditEntry): void => {
+    setAuditLog((previous) =>
+      [entry, ...previous].slice(0, MAX_AUDIT_ENTRIES),
+    );
+  }, []);
 
   const send = useCallback(
     async (command: OperatorCommand): Promise<OperatorSendResult> => {
       if (inFlight.current) {
+        // A local guard, not a worker verdict: nothing reached anyone, so
+        // there is nothing to audit.
         return { ok: false, error: "another command is still in flight" };
       }
       inFlight.current = true;
@@ -61,8 +90,15 @@ export function useOperator(url?: string): OperatorController {
             | { queued?: unknown }
             | null;
           const queuedId = typeof body?.queued === "number" ? body.queued : null;
-          setLastQueuedAtMs(Date.now());
+          const sentAtMs = Date.now();
+          setLastQueuedAtMs(sentAtMs);
           setLastQueuedId(queuedId);
+          audit({
+            id: queuedId,
+            command,
+            sentAtMs,
+            status: "queued",
+          });
           return { ok: true, queuedId: queuedId ?? -1 };
         }
         const detail = await response.json().catch(() => null);
@@ -71,18 +107,32 @@ export function useOperator(url?: string): OperatorController {
             ? detail.error
             : `command refused (HTTP ${response.status})`;
         setLastError(message);
+        audit({
+          id: null,
+          command,
+          sentAtMs: Date.now(),
+          status: "refused",
+          error: message,
+        });
         return { ok: false, error: message };
       } catch (error) {
         const message = error instanceof Error ? error.message : "command transport failed";
         setLastError(message);
+        audit({
+          id: null,
+          command,
+          sentAtMs: Date.now(),
+          status: "refused",
+          error: message,
+        });
         return { ok: false, error: message };
       } finally {
         inFlight.current = false;
         setPending(false);
       }
     },
-    [endpoint],
+    [endpoint, audit],
   );
 
-  return { send, pending, lastError, lastQueuedAtMs, lastQueuedId };
+  return { send, pending, lastError, lastQueuedAtMs, lastQueuedId, auditLog };
 }

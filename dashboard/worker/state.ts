@@ -52,6 +52,11 @@ export interface Funnel {
   proportional: number;
   phantom: number;
   brokenLeg: number;
+  /** Micro-live execution counters. Absent until a live runner reports a
+   * stats frame carrying them — never invented as zeros. */
+  unwindFailures?: number;
+  ackMatched?: number;
+  inFlightRemaining?: number;
 }
 
 export interface Capital {
@@ -161,6 +166,15 @@ export class PositionSession {
         };
         this.funnelCounts.attempted = frame.attempted;
         this.funnelCounts.capitalShort = frame.capitalShort;
+        if (frame.unwindFailures !== undefined) {
+          this.funnelCounts.unwindFailures = frame.unwindFailures;
+        }
+        if (frame.ackMatched !== undefined) {
+          this.funnelCounts.ackMatched = frame.ackMatched;
+        }
+        if (frame.inFlightRemaining !== undefined) {
+          this.funnelCounts.inFlightRemaining = frame.inFlightRemaining;
+        }
         this.windowsCompleted = Math.max(this.windowsCompleted, frame.windowsCompleted);
         this.seqCursor = Math.max(this.seqCursor, frame.seqCursor);
         break;

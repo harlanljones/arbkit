@@ -285,8 +285,9 @@ cargo run -p arbkit-exec --features runner --example prod_trader -- \
     [--kalshi-markets-url=<fixture-url>] [--poly-events-url=<fixture-url>]
 ```
 
-Flags parse only in `--flag=value` form; a space-separated value is silently
-ignored and the default applies instead (rehearsal finding F1, 2026-08-24).
+Flags accept both `--flag=value` and `--flag value`; both spellings resolve
+identically. A value-taking flag written bare with no following value is a
+usage error (exit 2), never a silent default.
 Pinned discovery URLs must carry only their scope — the runner appends its own
 `status=open` / `closed=false&limit…` filters (finding F2).
 

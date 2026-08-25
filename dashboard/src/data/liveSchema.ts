@@ -28,6 +28,9 @@ export const FunnelSchema = z.object({
   proportional: z.number().int(),
   phantom: z.number().int(),
   brokenLeg: z.number().int(),
+  unwindFailures: z.number().int().optional(),
+  ackMatched: z.number().int().optional(),
+  inFlightRemaining: z.number().int().optional(),
 });
 
 export const CapitalSchema = z.object({

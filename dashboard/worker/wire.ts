@@ -158,6 +158,12 @@ export const runnerFrameSchema = z.discriminatedUnion("t", [
     availableCents: moneyCents.nullable(),
     attempted: z.number().int(),
     capitalShort: z.number().int(),
+    // Micro-live execution counters. Optional for forward/backward
+    // compatibility: a paper runner may omit them (nothing is in flight on
+    // paper), and an old runner's stats must not break a new worker.
+    unwindFailures: z.number().int().optional(),
+    ackMatched: z.number().int().optional(),
+    inFlightRemaining: z.number().int().optional(),
   }),
   z.object({
     t: z.literal("heartbeat"),

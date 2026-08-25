@@ -306,4 +306,24 @@ mod tests {
             )
             .expect("signature verifies over the documented preimage");
     }
+
+    /// Without both credential halves the feed never attempts a signed
+    /// handshake: it connects bare and the venue's 401 is loud — never a
+    /// silently empty book (rehearsal finding F3).
+    #[test]
+    fn signer_is_none_without_credentials() {
+        assert!(KalshiFeedConfig::default().signer().is_none());
+
+        let key_only = KalshiFeedConfig {
+            api_key: "some-key-id-123456".into(),
+            ..Default::default()
+        };
+        assert!(key_only.signer().is_none());
+
+        let pem_only = KalshiFeedConfig {
+            private_key_pem: "-----BEGIN PRIVATE KEY-----".into(),
+            ..Default::default()
+        };
+        assert!(pem_only.signer().is_none());
+    }
 }

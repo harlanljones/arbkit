@@ -19,11 +19,32 @@ grep -E 'ARBKIT_KILL_SWITCH|ARBKIT_MAX|ARBKIT_MIN_EDGE' .env   # must NOT exist
 echo "ARBKIT_KILL_SWITCH=${ARBKIT_KILL_SWITCH:-<unset>}"        # unset == engaged
 ```
 
+Feed credential presence — presence only, never values (a dry-run warmup needs
+the read-only Kalshi signing key to form a Kalshi book; without it the feed
+401s loudly on connect and only the Polymarket side of the tape exists):
+
+```bash
+if [ -n "${KALSHI_ACCESS_KEY_ID:-}" ]; then
+  echo "KALSHI_ACCESS_KEY_ID: present"
+else
+  echo "KALSHI_ACCESS_KEY_ID: ABSENT (Kalshi book will 401)"
+fi
+if [ -n "${KALSHI_PRIVATE_KEY_PATH:-}" ] && [ -r "$KALSHI_PRIVATE_KEY_PATH" ]; then
+  echo "KALSHI_PRIVATE_KEY_PATH: present, readable"
+else
+  echo "KALSHI_PRIVATE_KEY_PATH: ABSENT or unreadable (Kalshi book will 401)"
+fi
+```
+
 - Kill switch engaged (`ARBKIT_KILL_SWITCH` unset or != `0`) is the only
   acceptable resting state.
 - Live mode refuses to start while engaged (exit code 3). Never "temporarily"
   export `ARBKIT_KILL_SWITCH=0` into a shared shell; arm per-session, on
   purpose (§2).
+- The boot line prints `kalshi_feed_signed=true|false`; a warmup that needs
+  both venues' books must see `true` before starting (§1). Never echo the
+  key id or key path value — presence is the only signal the posture check
+  reads (finding F3).
 
 ## 1. Session start / stop
 
@@ -49,9 +70,9 @@ cargo run -p arbkit-exec --features runner --example prod_trader --release -- \
   environment the Kalshi feed 401s and never forms a book (Polymarket's is
   anonymous). Dry-run still starts, streams, and rehearses the command path —
   a full-slate warmup needs those read-only credentials supplied.
-- Flags parse only in `--flag=value` form; a space-separated value is
-  silently ignored and the default applies instead (rehearsal finding,
-  2026-08-24).
+- Flags accept both `--flag=value` and `--flag value`; a value-taking flag
+  written bare with no following value is a usage error (exit 2), never a
+  silent default.
 - Without `--windows`, the session runs until `session-end` arrives through
   the command queue (§3) or the process is killed.
 - Boot line prints mode + full risk posture; the first `risk` frame is the

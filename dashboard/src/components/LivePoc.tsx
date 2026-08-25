@@ -11,7 +11,7 @@
 //! so, and theoretical profit is always labeled as the worst-case guarantee
 //! at lock time — never confused with realized settlement.
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -23,6 +23,8 @@ import {
   YAxis,
 } from "recharts";
 import { money, percent } from "../data/metrics";
+import type { RiskState } from "../data/liveSchema";
+import { STREAM_SILENT_AFTER_MS } from "../data/liveSession";
 import type { TradeRecord } from "../data/schema";
 import { useLiveSession } from "../data/useLiveSession";
 import { useOperator } from "../data/useOperator";
@@ -53,10 +55,32 @@ function defaultLiveUrl(): string {
   return `${scheme}://${window.location.host}/api/live/ws`;
 }
 
-export function LivePoc({ url }: { url?: string }) {
+/** Re-renders its consumer on a fixed cadence so time-derived labels (frame
+ * age, stream silence) keep moving while nothing else changes. Without this,
+ * a page showing "last frame 2s ago" would freeze there forever the moment
+ * frames stop arriving — stale data dressed as fresh. */
+function useNowTick(intervalMs = 1_000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(timer);
+  }, [intervalMs]);
+  return now;
+}
+
+export function LivePoc({
+  url,
+  silentAfterMs = STREAM_SILENT_AFTER_MS,
+}: {
+  url?: string;
+  /** Stream-silence budget for a supposedly-live session. Defaults to
+   * `STREAM_SILENT_AFTER_MS`, matching the worker's heartbeat verdict. */
+  silentAfterMs?: number;
+}) {
   const streamUrl = url ?? defaultLiveUrl();
   const live = useLiveSession(streamUrl);
   const operator = useOperator();
+  const now = useNowTick();
 
   const recentRows = useMemo(
     () => live.items.slice(-VISIBLE_ROWS).reverse(),
@@ -94,13 +118,21 @@ export function LivePoc({ url }: { url?: string }) {
           </div>
           <div>
             <dt>Last worker frame</dt>
-            <dd>{formatLastFrame(live.lastFrameAtMs)}</dd>
+            <dd>{formatLastFrame(live.lastFrameAtMs, now)}</dd>
           </div>
         </dl>
         <p className="live-console-proof">
           <span aria-hidden="true" /> Live data path · worker frames only · no simulated browser activity
         </p>
       </div>
+
+      <StreamHealthBanner
+        connection={live.connection}
+        sessionStatus={live.sessionStatus}
+        lastFrameAtMs={live.lastFrameAtMs}
+        now={now}
+        silentAfterMs={silentAfterMs}
+      />
 
       {/* A connected-but-idle room still pushes zeroed totals; only a real
           session header earns the numbers grid. The operator console is the
@@ -113,6 +145,8 @@ export function LivePoc({ url }: { url?: string }) {
       ) : (
         <>
           <KpiGrid live={live} />
+
+          <SessionHealthPanel live={live} />
 
           <RoiSparkline series={live.roiSeries} />
 
@@ -144,12 +178,107 @@ function realizedRowDisposition(record: TradeRecord): string | undefined {
   return record.realizedProfitCents > 0 ? undefined : "is-loss";
 }
 
-function formatLastFrame(timestamp: number | null): string {
+function formatLastFrame(timestamp: number | null, now: number): string {
   if (timestamp === null) return "No frame received";
-  const ageMs = Math.max(0, Date.now() - timestamp);
-  if (ageMs < 1_000) return "<1s ago";
-  if (ageMs < 60_000) return `${Math.floor(ageMs / 1_000)}s ago`;
-  return `${Math.floor(ageMs / 60_000)}m ago`;
+  const ageMs = Math.max(0, now - timestamp);
+  return `${formatAge(ageMs)} ago`;
+}
+
+/** Human age for health labels: "<1s", "12s", "3m 20s". */
+function formatAge(ageMs: number): string {
+  if (ageMs < 1_000) return "<1s";
+  if (ageMs < 60_000) return `${Math.floor(ageMs / 1_000)}s`;
+  const minutes = Math.floor(ageMs / 60_000);
+  const seconds = Math.floor((ageMs % 60_000) / 1_000);
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+/** The three locally-observable stream states, kept distinct on purpose:
+ *
+ * - **disconnected** — no socket (connecting or reconnecting). Controls are
+ *   inert and every number below is last-known.
+ * - **stale** — the socket is open, a session claims to be live, yet no
+ *   frame has crossed for longer than the silence budget. This is the case
+ *   the server cannot report through a dead pipe: data above is frozen as
+ *   of its last frame and must be read as outdated.
+ * - **healthy** — frames are flowing; includes an idle room waiting for a
+ *   runner and an ended session, where silence is expected and is not
+ *   staleness. */
+type StreamHealth = "disconnected" | "stale" | "healthy";
+
+function streamHealth(
+  connection: string,
+  sessionStatus: string,
+  lastFrameAtMs: number | null,
+  now: number,
+  silentAfterMs: number,
+): { health: StreamHealth; ageMs: number | null } {
+  if (connection !== "open") return { health: "disconnected", ageMs: null };
+  const ageMs = lastFrameAtMs === null ? null : Math.max(0, now - lastFrameAtMs);
+  const silent =
+    sessionStatus === "live" &&
+    ageMs !== null &&
+    ageMs >= silentAfterMs;
+  return silent ? { health: "stale", ageMs } : { health: "healthy", ageMs };
+}
+
+const STREAM_HEALTH_LABELS: Record<StreamHealth, string> = {
+  disconnected: "Stream disconnected",
+  stale: "Stream silent",
+  healthy: "Stream live",
+};
+
+function StreamHealthBanner({
+  connection,
+  sessionStatus,
+  lastFrameAtMs,
+  now,
+  silentAfterMs,
+}: {
+  connection: string;
+  sessionStatus: string;
+  lastFrameAtMs: number | null;
+  now: number;
+  silentAfterMs: number;
+}) {
+  const { health, ageMs } = streamHealth(
+    connection,
+    sessionStatus,
+    lastFrameAtMs,
+    now,
+    silentAfterMs,
+  );
+
+  let detail: string;
+  if (health === "disconnected") {
+    detail =
+      connection === "connecting"
+        ? "Opening the live stream…"
+        : "Reconnecting — everything below is last-known data.";
+  } else if (health === "stale") {
+    detail = `no frame for ${formatAge(ageMs ?? 0)} — data below is frozen as of its last frame; treat it as outdated until frames resume.`;
+  } else if (sessionStatus === "idle") {
+    detail = "waiting for a runner — silence here is expected.";
+  } else {
+    detail =
+      ageMs === null
+        ? "awaiting first frame."
+        : `last frame ${formatAge(ageMs)} ago.`;
+  }
+
+  return (
+    <div
+      className={`stream-health stream-health--${health}`}
+      role="status"
+      aria-live="polite"
+      data-testid="stream-health"
+    >
+      <span className={`live-pill live-pill--stream-${health}`}>
+        {STREAM_HEALTH_LABELS[health]}
+      </span>
+      <span className="stream-health-detail">{detail}</span>
+    </div>
+  );
 }
 
 function shortRunId(runId: string): string {
@@ -224,6 +353,82 @@ function KpiGrid({ live }: { live: LiveView }) {
       </div>
     </>
   );
+}
+
+/** Micro-live session health: the runner's own execution counters and the
+ * caps in force, adopted verbatim. Counters a live runner has not yet
+ * reported render as "—" (fails inert, like the rest of the page); zeros it
+ * has reported render as data. The phantom rate is derived from the funnel's
+ * authoritative counts and shown against the paper baseline (10.01%, the
+ * deterministic sim phantom rate) the micro-live halt rule compares against. */
+function SessionHealthPanel({ live }: { live: LiveView }) {
+  const { funnel, risk } = live;
+  if (funnel === null) return null;
+
+  const phantomRateBps =
+    funnel.attempted > 0
+      ? Math.round((funnel.phantom / funnel.attempted) * 10_000)
+      : null;
+
+  return (
+    <section className="session-health" role="group" aria-label="Micro-live session health">
+      <div className="session-health-head">
+        <strong>Session health</strong>
+        <span>Micro-live counters and caps, straight from the runner</span>
+      </div>
+      <dl className="live-console-meta session-health-meta">
+        <div>
+          <dt>Attempted</dt>
+          <dd>{funnel.attempted}</dd>
+        </div>
+        <div>
+          <dt>Unwind failures</dt>
+          <dd>{funnel.unwindFailures ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Ack matched</dt>
+          <dd>{funnel.ackMatched ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>In-flight remaining</dt>
+          <dd>{funnel.inFlightRemaining ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Phantom rate</dt>
+          <dd>
+            {phantomRateBps === null
+              ? "—"
+              : `${percent(phantomRateBps)} of ${funnel.attempted} attempted`}
+            <small className="session-health-note">paper baseline 10.01%</small>
+          </dd>
+        </div>
+        <div>
+          <dt>Per-leg cap</dt>
+          <dd>{renderCapCents(risk, risk?.maxStakePerLegCents ?? null)}</dd>
+        </div>
+        <div>
+          <dt>Daily loss cap</dt>
+          <dd>{renderCapCents(risk, risk?.maxDailyLossCents ?? null)}</dd>
+        </div>
+        <div>
+          <dt>Open-trade cap</dt>
+          <dd>{renderCapCount(risk, risk?.maxOpenTrades ?? null)}</dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
+/** A null cap is the runner's own "not enforced"; a missing runner report is
+ * "—" (we do not know the posture, so we claim none). */
+function renderCapCents(risk: RiskState | null, cents: number | null): string {
+  if (risk === null) return "—";
+  return cents === null ? "Not enforced" : money(cents);
+}
+
+function renderCapCount(risk: RiskState | null, count: number | null): string {
+  if (risk === null) return "—";
+  return count === null ? "Not enforced" : String(count);
 }
 
 function RoiSparkline({

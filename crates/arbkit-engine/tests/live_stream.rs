@@ -199,6 +199,9 @@ fn time_trigger_flushes_a_lone_frame() {
         available_cents: Some(9_000),
         attempted: 1,
         capital_short: 0,
+        unwind_failures: 0,
+        ack_matched: 0,
+        in_flight_remaining: 0,
     });
 
     wait_until(
@@ -400,6 +403,9 @@ fn streams_a_full_session_over_real_http() {
         available_cents: Some(200_001),
         attempted: 2,
         capital_short: 0,
+        unwind_failures: 0,
+        ack_matched: 0,
+        in_flight_remaining: 0,
     });
     handle.send(LiveFrame::SessionEnd);
 

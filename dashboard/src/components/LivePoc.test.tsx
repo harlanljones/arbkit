@@ -5,7 +5,7 @@
 //! and the KPI grid renders the authoritative integers — plus the resume
 //! handshake on reconnect. No module mocks beyond the socket itself.
 
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LivePoc } from "./LivePoc";
 
@@ -92,6 +92,9 @@ const SNAPSHOT_FRAME = {
     proportional: 0,
     phantom: 8,
     brokenLeg: 0,
+    unwindFailures: 0,
+    ackMatched: 103,
+    inFlightRemaining: 1,
   },
   capital: { lockedCents: 0, availableCents: 10_204_780 },
   windowsCompleted: 3,
@@ -346,5 +349,189 @@ describe("LivePoc", () => {
 
     expect(screen.getByText("Runner silent — session stale")).toBeInTheDocument();
     expect(screen.queryByText("Session live")).toBeNull();
+  });
+
+  it("renders the micro-live session health panel from streamed counters", async () => {
+    render(<LivePoc url="ws://test/api/live/ws" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const socket = lastSocket();
+    socket.open();
+    socket.message(SNAPSHOT_FRAME);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+
+    const panel = screen.getByRole("group", { name: "Micro-live session health" });
+    expect(panel).toBeInTheDocument();
+    // Honest zeros render as data, never hidden and never "—".
+    // Attempted and Ack matched both read 103 in this fixture.
+    expect(within(panel).getAllByText("103")).toHaveLength(2);
+    expect(within(panel).getByText("0")).toBeInTheDocument(); // unwind failures
+    expect(within(panel).getByText("1")).toBeInTheDocument(); // in-flight remaining
+    // Phantom rate is derived from authoritative counts: 8/103 ≈ 7.77%,
+    // shown against the paper baseline reference.
+    expect(within(panel).getByText("7.77% of 103 attempted")).toBeInTheDocument();
+    expect(within(panel).getByText("paper baseline 10.01%")).toBeInTheDocument();
+    // The paper fixture enforces no caps, so the panel says so honestly.
+    expect(within(panel).getAllByText("Not enforced")).toHaveLength(3);
+  });
+
+  it("fails inert with — when micro-live counters and caps are absent", async () => {
+    render(<LivePoc url="ws://test/api/live/ws" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const socket = lastSocket();
+    socket.open();
+    socket.message({
+      ...SNAPSHOT_FRAME,
+      risk: null,
+      funnel: {
+        attempted: 0,
+        capitalShort: 0,
+        clean: 0,
+        proportional: 0,
+        phantom: 0,
+        brokenLeg: 0,
+      },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+
+    const panel = screen.getByRole("group", { name: "Micro-live session health" });
+    expect(panel).toBeInTheDocument();
+    // A runner that has not reported counters or caps must not have them
+    // invented: each renders "—".
+    expect(within(panel).getAllByText("—")).toHaveLength(7);
+    expect(within(panel).queryByText("Not enforced")).toBeNull();
+  });
+
+  it("reports a healthy stream with last-frame age while frames flow", async () => {
+    render(<LivePoc url="ws://test/api/live/ws" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const socket = lastSocket();
+    socket.open();
+    socket.message(SNAPSHOT_FRAME);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    const banner = screen.getByTestId("stream-health");
+    expect(banner).toHaveTextContent("Stream live");
+    // The age label is real: time has passed since the frame landed.
+    expect(banner).toHaveTextContent(/last frame (\d+s|<1s) ago/);
+  });
+
+  it("declares a supposedly-live stream stale after the silence budget", async () => {
+    render(<LivePoc url="ws://test/api/live/ws" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const socket = lastSocket();
+    socket.open();
+    socket.message(SNAPSHOT_FRAME);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    expect(screen.getByTestId("stream-health")).toHaveTextContent("Stream live");
+
+    // Silence past the 20s budget on a session claiming to be live: the
+    // banner must call it stale and label the data's true age — without any
+    // new frame arriving to refresh anything.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(22_000);
+    });
+
+    const banner = screen.getByTestId("stream-health");
+    expect(banner).toHaveTextContent("Stream silent");
+    expect(banner).toHaveTextContent(/no frame for 2[12]s/);
+    expect(banner).toHaveTextContent(/frozen as of its last frame/);
+
+    // A resumed frame restores health and resets the age honestly.
+    socket.message({ t: "hello", serverTimeEpochMs: 2 });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(screen.getByTestId("stream-health")).toHaveTextContent("Stream live");
+  });
+
+  it("never calls an idle room stale — silence there is expected", async () => {
+    render(<LivePoc url="ws://test/api/live/ws" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const socket = lastSocket();
+    socket.open();
+    socket.message({
+      t: "snapshot",
+      status: "idle",
+      session: null,
+      risk: null,
+      fills: [],
+      totals: {
+        trades: 0,
+        stakedCents: 0,
+        theoreticalProfitCents: 0,
+        realizedProfitCents: 0,
+        expectedProfitCents: 0,
+        feesPaidCents: 0,
+        roiTheoreticalBps: 0,
+        roiRealizedBps: 0,
+      },
+      funnel: {
+        attempted: 0,
+        capitalShort: 0,
+        clean: 0,
+        proportional: 0,
+        phantom: 0,
+        brokenLeg: 0,
+      },
+      capital: { lockedCents: null, availableCents: null },
+      windowsCompleted: 0,
+      seqCursor: -1,
+      items: [],
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+
+    // Far past the silence budget: still healthy. An empty room is not a
+    // dead stream, and the page must not conflate the two.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+
+    const banner = screen.getByTestId("stream-health");
+    expect(banner).toHaveTextContent("Stream live");
+    expect(banner).toHaveTextContent(/waiting for a runner/);
+    expect(screen.getByText("Waiting for a runner")).toBeInTheDocument(); // session pill
+  });
+
+  it("shows the disconnected state while the socket is down", async () => {
+    render(<LivePoc url="ws://test/api/live/ws" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const socket = lastSocket();
+    socket.open();
+    socket.message(SNAPSHOT_FRAME);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    expect(screen.getByTestId("stream-health")).toHaveTextContent("Stream live");
+
+    socket.close();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    const banner = screen.getByTestId("stream-health");
+    expect(banner).toHaveTextContent("Stream disconnected");
+    expect(banner).toHaveTextContent(/Reconnecting/);
   });
 });

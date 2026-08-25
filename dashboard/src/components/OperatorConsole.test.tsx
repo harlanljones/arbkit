@@ -13,7 +13,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { LiveSessionState } from "../data/liveSession";
 import { initialLiveSession } from "../data/liveSession";
 import type { RiskState } from "../data/liveSchema";
-import type { OperatorCommand, OperatorController } from "../data/useOperator";
+import type {
+  CommandAuditEntry,
+  OperatorCommand,
+  OperatorController,
+} from "../data/useOperator";
 import { OperatorConsole } from "./OperatorConsole";
 
 const DISARMED_PAPER: RiskState = {
@@ -55,6 +59,7 @@ function fakeOperator(
     lastError: null,
     lastQueuedAtMs: null,
     lastQueuedId: null,
+    auditLog: [],
     commands,
     ...overrides,
   };
@@ -278,5 +283,115 @@ describe("OperatorConsole", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "Last command refused: command failed schema validation",
     );
+  });
+
+  it("shows an empty command trail before anything was sent", () => {
+    render(
+      <OperatorConsole
+        live={liveState({ connection: "open", risk: DISARMED_PAPER })}
+        operator={fakeOperator()}
+      />,
+    );
+
+    const trail = screen.getByTestId("command-audit");
+    expect(trail).toHaveTextContent("No commands sent from this console yet.");
+  });
+
+  it("renders queued, in-effect, and refused commands with ids and reasons", () => {
+    const sentAt = Date.parse("2026-08-24T12:00:00Z");
+    const entries: CommandAuditEntry[] = [
+      // Posture matches the commanded engage=true → the runner's own risk
+      // frame proves it is in effect.
+      {
+        id: 4,
+        command: { t: "kill-switch", engage: true },
+        sentAtMs: sentAt,
+        status: "queued",
+      },
+      // Session-end against a still-live session stays queued.
+      {
+        id: 3,
+        command: { t: "session-end" },
+        sentAtMs: sentAt - 1_000,
+        status: "queued",
+      },
+      // Worker-edge refusal carries its verbatim reason.
+      {
+        id: null,
+        command: { t: "session-start", mode: "live" },
+        sentAtMs: sentAt - 2_000,
+        status: "refused",
+        error: "command failed schema validation",
+      },
+    ];
+    render(
+      <OperatorConsole
+        live={liveState({ connection: "open", sessionStatus: "live", risk: ENGAGED_LIVE })}
+        operator={fakeOperator({ auditLog: entries })}
+      />,
+    );
+
+    const trail = screen.getByTestId("command-audit");
+    const rows = within(trail).getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+
+    // Arm command: posture already matches, so the runner's own frame
+    // proves it is in effect.
+    expect(rows[0]).toHaveTextContent("Arm kill switch");
+    expect(rows[0]).toHaveTextContent("#4");
+    expect(within(rows[0]).getByText("In effect")).toBeInTheDocument();
+
+    // End-session while the session is still live: queued, honestly.
+    expect(rows[1]).toHaveTextContent("End session");
+    expect(rows[1]).toHaveTextContent("#3");
+    expect(within(rows[1]).getByText("Queued")).toBeInTheDocument();
+
+    // Refusal shows the worker's verbatim reason — evidence, not noise.
+    expect(rows[2]).toHaveTextContent("Start session (live)");
+    expect(within(rows[2]).getByText("Refused")).toBeInTheDocument();
+    expect(
+      within(rows[2]).getByText("command failed schema validation"),
+    ).toBeInTheDocument();
+  });
+
+  it("reads a disarm as in effect once the runner's own posture matches", () => {
+    const entry: CommandAuditEntry = {
+      id: 9,
+      command: { t: "kill-switch", engage: false, confirm: true },
+      sentAtMs: Date.parse("2026-08-24T12:00:00Z"),
+      status: "queued",
+    };
+    render(
+      <OperatorConsole
+        live={liveState({ connection: "open", sessionStatus: "live", risk: DISARMED_PAPER })}
+        operator={fakeOperator({ auditLog: [entry] })}
+      />,
+    );
+
+    const trail = screen.getByTestId("command-audit");
+    expect(within(trail).getByText("Disarm kill switch")).toBeInTheDocument();
+    expect(within(trail).getByText("#9")).toBeInTheDocument();
+    expect(within(trail).getByText("In effect")).toBeInTheDocument();
+    // A disarmed posture means order entry is open; no refusal to show.
+    expect(within(trail).queryByText("Refused")).toBeNull();
+  });
+
+  it("marks an ended session's end-command in effect from the session frames", () => {
+    const entry: CommandAuditEntry = {
+      id: 11,
+      command: { t: "session-end" },
+      sentAtMs: Date.parse("2026-08-24T12:00:00Z"),
+      status: "queued",
+    };
+    render(
+      <OperatorConsole
+        live={liveState({ connection: "open", sessionStatus: "ended", risk: ENGAGED_LIVE })}
+        operator={fakeOperator({ auditLog: [entry] })}
+      />,
+    );
+
+    const trail = screen.getByTestId("command-audit");
+    expect(within(trail).getByText("End session")).toBeInTheDocument();
+    expect(within(trail).getByText("In effect")).toBeInTheDocument();
   });
 });

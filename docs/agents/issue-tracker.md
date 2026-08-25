@@ -41,3 +41,24 @@ relations modeling the prerequisite order. All eleven issues belong to the
 `Live trading prod readiness` project (slug `741506c9d49e`) and are **Done**
 as of 2026-08-24; per-ticket evidence lives in each issue's closing comment,
 in `GATES.md`, and in `RESULTS.md` §9.
+
+### arbkit v0.2 (2026-08-24)
+
+The **arbkit v0.2** project (slug `856235744930`,
+https://linear.app/harlanljones/project/arbkit-v02-856235744930) tracks the
+micro-live execution program and its operator-facing dashboard surface,
+using the same parent-plus-children pattern: parent `HJ-288` with children
+
+| Ticket | Blocked by |
+|---|---|
+| `HJ-289` flag parser accepts space-separated values (F1) | — |
+| `HJ-290` read-only Kalshi feed credentials (F3) | — |
+| `HJ-291` dashboard: micro-live session ledger panel | — |
+| `HJ-292` dashboard: operator command audit trail UI | — |
+| `HJ-293` dashboard: stream-stale / failing-inert banner | — |
+| `HJ-294` first micro-live session under `--micro` caps | HJ-290 |
+| `HJ-295` per-session same-tape comparison + dated rows | HJ-294 |
+| `HJ-296` v0.2 readiness review + docs status flip | HJ-295 |
+
+All nine issues start in Backlog, unassigned; evidence lands in
+`RESULTS.md` §9 and `GATES.md`.

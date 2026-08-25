@@ -884,6 +884,9 @@ fn main() {
             available_cents: bankroll.as_ref().map(Bankroll::total_available),
             attempted: stats.attempted,
             capital_short: stats.capital_short,
+            unwind_failures: 0,
+            ack_matched: 0,
+            in_flight_remaining: 0,
         });
         windows_completed = window_index + 1;
 

@@ -148,11 +148,20 @@ describe("PositionSession totals", () => {
         availableCents: 900_001,
         attempted: 44,
         capitalShort: 3,
+        unwindFailures: 1,
+        ackMatched: 40,
+        inFlightRemaining: 2,
       }),
       12,
     );
     expect(session.currentCapital()).toEqual({ lockedCents: 99_999, availableCents: 900_001 });
-    expect(session.funnel()).toMatchObject({ attempted: 44, capitalShort: 3 });
+    expect(session.funnel()).toMatchObject({
+      attempted: 44,
+      capitalShort: 3,
+      unwindFailures: 1,
+      ackMatched: 40,
+      inFlightRemaining: 2,
+    });
     expect(session.windows()).toBe(3);
     expect(session.getSeqCursor()).toBe(41);
   });

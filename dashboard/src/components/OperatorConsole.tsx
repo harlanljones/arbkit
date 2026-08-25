@@ -16,9 +16,11 @@ import { money } from "../data/metrics";
 import type { FillRecord } from "../data/liveSchema";
 import type { TradeRecord } from "../data/schema";
 import type { LiveSessionState } from "../data/liveSession";
-import type { OperatorController } from "../data/useOperator";
+import type { CommandAuditEntry, OperatorCommand, OperatorController } from "../data/useOperator";
 
 const FILL_FEED_ROWS = 12;
+/** Rows shown in the command trail, newest first. */
+const AUDIT_VISIBLE_ROWS = 12;
 
 export function OperatorConsole({
   live,
@@ -195,6 +197,8 @@ export function OperatorConsole({
 
       <OpenPositionsTable rows={openPositions} />
 
+      <CommandAuditTrail entries={operator.auditLog} live={live} />
+
       <FillFeed fills={[...live.fills].reverse().slice(0, FILL_FEED_ROWS)} />
 
       {settledPositions.length > 0 && (
@@ -249,6 +253,95 @@ function OpenPositionsTable({ rows }: { rows: TradeRecord[] }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** Lifecycle of one audited command, derived only from what the wire proves:
+ * a refusal is the worker's own answer; "in effect" means the runner's own
+ * risk or session frames now match the command. Nothing here claims the
+ * runner applied anything — the frames are the evidence, this is the
+ * reading. A session-start stays "queued" because a matching start is
+ * acknowledged as already-running with no distinct echo of its own. */
+type AuditStatus = "refused" | "queued" | "in-effect";
+
+const AUDIT_STATUS_LABELS: Record<AuditStatus, string> = {
+  refused: "Refused",
+  queued: "Queued",
+  "in-effect": "In effect",
+};
+
+function auditStatus(entry: CommandAuditEntry, live: LiveSessionState): AuditStatus {
+  if (entry.status === "refused") return "refused";
+  switch (entry.command.t) {
+    case "kill-switch":
+      return live.risk !== null && live.risk.killSwitch === entry.command.engage
+        ? "in-effect"
+        : "queued";
+    case "session-end":
+      return live.sessionStatus === "ended" ? "in-effect" : "queued";
+    case "session-start":
+      return "queued";
+  }
+}
+
+function auditActionLabel(command: OperatorCommand): string {
+  switch (command.t) {
+    case "kill-switch":
+      return command.engage ? "Arm kill switch" : "Disarm kill switch";
+    case "session-start":
+      return `Start session (${command.mode})`;
+    case "session-end":
+      return "End session";
+  }
+}
+
+function CommandAuditTrail({
+  entries,
+  live,
+}: {
+  entries: CommandAuditEntry[];
+  live: LiveSessionState;
+}) {
+  return (
+    <div className="command-audit" data-testid="command-audit">
+      <h3>Command trail</h3>
+      {entries.length === 0 ? (
+        <p className="empty-inline">No commands sent from this console yet.</p>
+      ) : (
+        <>
+          <p className="method-note">
+            Commands this console sent, newest first. "In effect" reads the
+            runner's own risk and session frames — queuing never implies
+            application.
+          </p>
+          <ol className="command-audit-list">
+            {entries.slice(0, AUDIT_VISIBLE_ROWS).map((entry, index) => {
+              const status = auditStatus(entry, live);
+              const sentAt = new Date(entry.sentAtMs);
+              return (
+                <li key={`${entry.sentAtMs}-${index}`}>
+                  <span className="command-audit-action">
+                    {auditActionLabel(entry.command)}
+                  </span>
+                  {entry.id !== null && (
+                    <span className="command-audit-id">#{entry.id}</span>
+                  )}
+                  <time dateTime={sentAt.toISOString()}>
+                    {sentAt.toLocaleTimeString()}
+                  </time>
+                  <span className={`trade-badge command-audit-status--${status}`}>
+                    {AUDIT_STATUS_LABELS[status]}
+                  </span>
+                  {status === "refused" && entry.error !== undefined && (
+                    <span className="command-audit-error">{entry.error}</span>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      )}
     </div>
   );
 }

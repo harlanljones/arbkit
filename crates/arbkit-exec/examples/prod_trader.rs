@@ -100,6 +100,8 @@ struct RunnerConfig {
     ingest_url: String,
     /// Bearer token for ingest + command pull.
     token: String,
+    /// Environment variable name the bearer token came from (secret scan).
+    token_env: String,
     /// Durable risk state path.
     state_path: String,
     /// Execution journal path (NDJSON, one record per attempt).
@@ -126,16 +128,40 @@ struct RunnerConfig {
     proof_path: String,
 }
 
-fn arg_value(flag: &str) -> Option<String> {
-    let prefix = format!("--{flag}=");
-    env::args()
-        .skip(1)
-        .find_map(|arg| arg.strip_prefix(&prefix).map(str::to_owned))
+/// Read the value of a `--flag` argument, accepting both `--flag=value` and
+/// the space-separated `--flag value` spelling. Both resolve identically.
+///
+/// A value-taking flag written bare with no following value is a usage error,
+/// never a silent default: silently falling back to defaults when an operator
+/// typed `--windows 5` (space form) is the failure mode this replaces.
+fn arg_value(args: &[String], flag: &str) -> Result<Option<String>, String> {
+    let eq = format!("--{flag}=");
+    let bare = format!("--{flag}");
+    let mut i = 0;
+    while i < args.len() {
+        if let Some(rest) = args[i].strip_prefix(&eq) {
+            return Ok(Some(rest.to_owned()));
+        }
+        if args[i] == bare {
+            match args.get(i + 1) {
+                Some(next) if !next.starts_with("--") => return Ok(Some(next.clone())),
+                _ => {
+                    return Err(format!(
+                        "flag `{bare}` requires a value (`{bare}=<value>` or `{bare} <value>`)"
+                    ))
+                }
+            }
+        }
+        i += 1;
+    }
+    Ok(None)
 }
 
-fn arg_flag(flag: &str) -> bool {
-    let prefix = format!("--{flag}");
-    env::args().skip(1).any(|arg| arg == prefix)
+/// Whether a boolean `--flag` is present. Matches the bare spelling exactly;
+/// `--flag=value` is not a boolean form.
+fn arg_flag(args: &[String], flag: &str) -> bool {
+    let bare = format!("--{flag}");
+    args.iter().any(|arg| arg == &bare)
 }
 
 /// Venue-unwind operations this session performed (proof-report counter).
@@ -236,35 +262,47 @@ fn civil_from_unix(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
 
 impl RunnerConfig {
     fn from_env() -> Result<Self, String> {
-        let mode = arg_value("mode")
-            .or_else(|| env::var("ARBKIT_EXEC_MODE").ok())
-            .unwrap_or_else(|| "dry-run".to_owned());
+        Self::from_args(&env::args().skip(1).collect::<Vec<_>>())
+    }
+
+    fn from_args(args: &[String]) -> Result<Self, String> {
+        let mode = match arg_value(args, "mode") {
+            Ok(Some(value)) => value,
+            Ok(None) => env::var("ARBKIT_EXEC_MODE")
+                .ok()
+                .unwrap_or_else(|| "dry-run".to_owned()),
+            Err(message) => return Err(message),
+        };
         if mode != "dry-run" && mode != "live" {
             return Err(format!("invalid mode {mode:?}; use dry-run or live"));
         }
-        let token_env = arg_value("token-env").unwrap_or_else(|| "LIVE_INGEST_TOKEN".to_owned());
+        let token_env =
+            arg_value(args, "token-env")?.unwrap_or_else(|| "LIVE_INGEST_TOKEN".to_owned());
         let token = env::var(&token_env).unwrap_or_default();
-        let windows_limit = arg_value("windows").and_then(|w| w.parse::<u64>().ok());
+        let windows_limit = arg_value(args, "windows")?.and_then(|w| w.parse::<u64>().ok());
         Ok(Self {
             mode,
-            ingest_url: arg_value("url").unwrap_or_else(|| DEFAULT_INGEST_URL.to_owned()),
+            ingest_url: arg_value(args, "url")?.unwrap_or_else(|| DEFAULT_INGEST_URL.to_owned()),
             token,
-            state_path: arg_value("state").unwrap_or_else(|| "prod-risk-state.json".to_owned()),
-            journal_path: arg_value("journal").unwrap_or_else(|| "prod-session.ndjson".to_owned()),
+            token_env,
+            state_path: arg_value(args, "state")?
+                .unwrap_or_else(|| "prod-risk-state.json".to_owned()),
+            journal_path: arg_value(args, "journal")?
+                .unwrap_or_else(|| "prod-session.ndjson".to_owned()),
             window: Duration::from_millis(
-                arg_value("window-ms")
+                arg_value(args, "window-ms")?
                     .and_then(|w| w.parse::<u64>().ok())
                     .unwrap_or(250),
             ),
             windows_limit,
-            kalshi_markets_url: arg_value("kalshi-markets-url"),
-            poly_events_url: arg_value("poly-events-url"),
-            tape_path: arg_value("tape"),
-            dump_catalog: arg_value("dump-catalog"),
-            micro: arg_flag("micro"),
-            occurrences_path: arg_value("occurrences")
+            kalshi_markets_url: arg_value(args, "kalshi-markets-url")?,
+            poly_events_url: arg_value(args, "poly-events-url")?,
+            tape_path: arg_value(args, "tape")?,
+            dump_catalog: arg_value(args, "dump-catalog")?,
+            micro: arg_flag(args, "micro"),
+            occurrences_path: arg_value(args, "occurrences")?
                 .unwrap_or_else(|| "occurrences.ndjson".to_owned()),
-            proof_path: arg_value("proof").unwrap_or_else(|| "live-proof.json".to_owned()),
+            proof_path: arg_value(args, "proof")?.unwrap_or_else(|| "live-proof.json".to_owned()),
         })
     }
 
@@ -542,6 +580,9 @@ enum Frame {
         available_cents: Option<i64>,
         attempted: u64,
         capital_short: u64,
+        unwind_failures: u64,
+        ack_matched: u64,
+        in_flight_remaining: usize,
     },
     #[serde(rename = "heartbeat")]
     Heartbeat { seq_cursor: u64 },
@@ -1038,15 +1079,29 @@ fn main() {
         }
     };
 
+    // Kalshi's market-data socket is authenticated even for read-only book
+    // updates. Report whether a signed handshake is possible so a dry-run
+    // warmup without credentials is a loud fact on the boot line, never a
+    // silently empty Kalshi book (rehearsal finding F3).
+    let kalshi_feed_signed = {
+        let key = env::var("KALSHI_ACCESS_KEY_ID").unwrap_or_default();
+        let pem = env::var("KALSHI_PRIVATE_KEY_PATH")
+            .ok()
+            .and_then(|path| fs::read_to_string(path).ok())
+            .unwrap_or_default();
+        !key.is_empty() && !pem.is_empty()
+    };
+
     println!(
         "prod_trader mode={} kill_switch={} max_stake_per_leg={}c daily_loss_cap={}c \
-         open_trades_cap={} min_edge_bps={}",
+         open_trades_cap={} min_edge_bps={} kalshi_feed_signed={}",
         config.mode,
         risk_config.kill_switch,
         risk_config.max_stake_per_leg_cents,
         risk_config.max_daily_loss_cents,
         risk_config.max_open_trades,
-        risk_config.min_edge_bps
+        risk_config.min_edge_bps,
+        kalshi_feed_signed,
     );
 
     // The resting posture refuses live order flow while the kill switch is
@@ -1069,10 +1124,10 @@ fn main() {
             }
         }
     } else {
-        let token_env = arg_value("token-env").unwrap_or_else(|| "LIVE_INGEST_TOKEN".to_owned());
+        let token_env = &config.token_env;
         let secrets = SecretScan::from_values([(
             token_env.as_str(),
-            env::var(&token_env).unwrap_or_default().as_str(),
+            env::var(token_env.as_str()).unwrap_or_default().as_str(),
         )]);
         (
             Endpoint::Dry(DryRunAdapter),
@@ -1821,6 +1876,9 @@ fn main() {
                 available_cents: Some(available),
                 attempted,
                 capital_short,
+                unwind_failures,
+                ack_matched,
+                in_flight_remaining: reconciler.in_flight().len(),
             });
             last_stats_push = Instant::now();
         }
@@ -1915,4 +1973,116 @@ fn main() {
         unresolved_plans,
         unprotected_skips
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn owned(args: &[&str]) -> Vec<String> {
+        args.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn value(args: &[&str], flag: &str) -> Result<Option<String>, String> {
+        arg_value(&owned(args), flag)
+    }
+
+    #[test]
+    fn equals_form_parses() {
+        assert_eq!(
+            value(&["--windows=5"], "windows").unwrap(),
+            Some("5".into())
+        );
+    }
+
+    #[test]
+    fn space_form_parses() {
+        assert_eq!(
+            value(&["--windows", "5"], "windows").unwrap(),
+            Some("5".into())
+        );
+    }
+
+    #[test]
+    fn both_spellings_resolve_identically() {
+        let eq = ["--mode=dry-run", "--windows=5", "--proof=/tmp/a=b.json"];
+        let sp = [
+            "--mode",
+            "dry-run",
+            "--windows",
+            "5",
+            "--proof",
+            "/tmp/a=b.json",
+        ];
+        for flag in ["mode", "windows", "proof"] {
+            assert_eq!(
+                value(&eq, flag).unwrap(),
+                value(&sp, flag).unwrap(),
+                "flag {flag}"
+            );
+        }
+    }
+
+    #[test]
+    fn space_form_keeps_equals_inside_value() {
+        assert_eq!(
+            value(&["--proof", "/tmp/a=b.json"], "proof").unwrap(),
+            Some("/tmp/a=b.json".into())
+        );
+    }
+
+    #[test]
+    fn space_form_value_after_other_flags() {
+        assert_eq!(
+            value(&["--micro", "--windows", "5"], "windows").unwrap(),
+            Some("5".into())
+        );
+    }
+
+    #[test]
+    fn missing_space_value_is_usage_error() {
+        assert!(value(&["--windows"], "windows").is_err());
+        assert!(value(&["--windows", "--micro"], "windows").is_err());
+        assert!(value(&["--micro", "--windows"], "windows").is_err());
+    }
+
+    #[test]
+    fn boolean_flag_matches_bare_only() {
+        assert!(arg_flag(&owned(&["--micro", "--windows=5"]), "micro"));
+        assert!(!arg_flag(&owned(&["--micro=true"]), "micro"));
+    }
+
+    #[test]
+    fn runner_config_equivalent_between_spellings() {
+        let eq = [
+            "--mode=dry-run",
+            "--windows=5",
+            "--state=/tmp/s.json",
+            "--proof=/tmp/a=b.json",
+        ];
+        let sp = [
+            "--mode",
+            "dry-run",
+            "--windows",
+            "5",
+            "--state",
+            "/tmp/s.json",
+            "--proof",
+            "/tmp/a=b.json",
+        ];
+        let a = RunnerConfig::from_args(&owned(&eq)).unwrap();
+        let b = RunnerConfig::from_args(&owned(&sp)).unwrap();
+        assert_eq!(a.mode, b.mode);
+        assert_eq!(a.windows_limit, b.windows_limit);
+        assert_eq!(a.state_path, b.state_path);
+        assert_eq!(a.proof_path, b.proof_path);
+        assert_eq!(a.ingest_url, b.ingest_url);
+        assert_eq!(a.micro, b.micro);
+    }
+
+    #[test]
+    fn runner_config_missing_value_is_error() {
+        assert!(RunnerConfig::from_args(&owned(&["--windows"])).is_err());
+        assert!(RunnerConfig::from_args(&owned(&["--windows", "--micro"])).is_err());
+    }
 }

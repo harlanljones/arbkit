@@ -25,6 +25,15 @@ export const MAX_ROI_POINTS = 720;
 /** Recent fill-reconciliation events kept for the operator feed. */
 export const MAX_FILLS = 128;
 
+/** How long a supposedly-live session's stream may stay silent before the
+ * page declares it stale on its own authority. Matches the worker's
+ * `STALE_AFTER_MS` heartbeat budget by default: a runner beats every 5 s and
+ * every ingest broadcasts totals, so four missed beats is generous. This is
+ * the locally-observable complement to the server's verdict — it catches a
+ * WebSocket that died without a close event, where no frame will ever arrive
+ * to update anything. Page-level configurable via LivePoc's `silentAfterMs`. */
+export const STREAM_SILENT_AFTER_MS = 20_000;
+
 export type ConnectionStatus = "connecting" | "open" | "reconnecting";
 export type SessionStatus = "idle" | "live" | "stale" | "ended";
 
