@@ -175,8 +175,13 @@ live is explicit before any order can flow.
 The live view carries an operator console for driving and supervising
 sessions. Authority stays on the runner side by construction:
 
-- **Command path.** The console POSTs to `/api/live/command`, guarded by
-  `LIVE_OPERATOR_TOKEN` (distinct from `LIVE_INGEST_TOKEN`). The worker
+- **Command path.** The console POSTs to `/api/live/command`. Authority is
+  evaluated inside the room against live state: a verified operator session
+  (challenge-signed login against the provisioned roster — see
+  `RUNBOOK.md` §9) attests the operator's name onto the queued command;
+  during migration the shared `LIVE_OPERATOR_TOKEN` still works as a
+  break-glass path and attests only itself (`anonymous-operator-token`);
+  with neither configured the surface refuses service (`503`). The worker
   validates every body against a zod schema (`session-start` with explicit
   mode, `session-end`, `kill-switch`) and queues it; the runner pulls queued
   commands from `/api/live/commands?afterId=<highWater>` and applies them
@@ -187,10 +192,11 @@ sessions. Authority stays on the runner side by construction:
   `confirm: true`; the worker's schema rejects a bare disarm with `400`, and
   the runner independently refuses one too, so a defect on either side cannot
   arm real order flow silently. Every applied kill-switch command lands in
-  the runbook log with a UTC timestamp, the command id, and the operator
-  identity from `ARBKIT_OPERATOR_ID` (the shared bearer token carries no
-  per-user identity, so the variable is the honest record — it defaults to
-  `unknown-operator` rather than a fabricated name).
+  the runbook log with a UTC timestamp, the command id, and the issuer:
+  the worker-attested session identity when one exists, otherwise
+  `ARBKIT_OPERATOR_ID` printed explicitly as *self-reported* (a shared
+  bearer token carries no per-user identity, so absence of attribution is
+  stated rather than papered over).
 - **Kill-switch posture.** The switch starts engaged, mirroring
   `RiskConfig::default()`. The engaged state renders even while
   disconnected; order entry exists only on an open connection with the
@@ -226,11 +232,15 @@ ARBKIT_MAX_OPEN_TRADES=1
 ARBKIT_MIN_EDGE_BPS=50
 ```
 
-The worker adds two secrets of its own, never stored in the repo:
+The worker adds secrets of its own, never stored in the repo:
 
 ```text
-LIVE_INGEST_TOKEN    # runner → worker ingest and command pull
-LIVE_OPERATOR_TOKEN  # operator console → worker command path
+LIVE_INGEST_TOKEN     # runner → worker ingest and command pull (machine-only)
+LIVE_OPERATOR_ROSTER  # JSON roster of operators: key id, name, SPKI public
+                      # key — provisions session login (RUNBOOK §9)
+LIVE_OPERATOR_TOKEN   # break-glass bearer for the command path; commands
+                      # queue attributed anonymous-operator-token. Delete to
+                      # retire once console sessions are in use.
 ```
 
 ### Secret handling (no key leakage)

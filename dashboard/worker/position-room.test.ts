@@ -94,14 +94,16 @@ class FakeServerSocket {
   }
 }
 
-function makeRoom(): {
+function makeRoom(
+  envOverrides: Partial<ConstructorParameters<typeof PositionRoom>[1]> = {},
+): {
   room: PositionRoom;
   storage: FakeAlarmStorage;
   connectViewer(): FakeServerSocket;
 } {
   const storage = new FakeAlarmStorage();
   const ctx = { storage } as unknown as Ctx;
-  const room = new PositionRoom(ctx, {} as Env);
+  const room = new PositionRoom(ctx, { ...envOverrides } as Env);
   return {
     room,
     storage,
@@ -446,16 +448,77 @@ function connectViewerSync(room: PositionRoom): FakeServerSocket {
   return socket;
 }
 
+/** Generates an RSA-PSS key pair shaped like a roster entry, plus a signer
+ * over the frozen login preimage. Shared by the auth and command tests. */
+async function makeOperatorKey(): Promise<{
+  publicKeyPem: string;
+  rosterEnv: { LIVE_OPERATOR_ROSTER: string };
+  sign(data: string): Promise<string>;
+}> {
+  const enc = new TextEncoder();
+  const pair = await crypto.subtle.generateKey(
+    {
+      name: "RSA-PSS",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  );
+  const spki = await crypto.subtle.exportKey("spki", pair.publicKey);
+  const body = btoa(String.fromCharCode(...new Uint8Array(spki)));
+  const publicKeyPem = [
+    "-----BEGIN PUBLIC KEY-----",
+    ...(body.match(/.{1,64}/g) ?? []),
+    "-----END PUBLIC KEY-----",
+  ].join("\n");
+  return {
+    publicKeyPem,
+    rosterEnv: {
+      LIVE_OPERATOR_ROSTER: JSON.stringify([
+        { keyId: "test-key-id-0001", name: "harlan", publicKeyPem },
+      ]),
+    },
+    async sign(data: string) {
+      const signature = await crypto.subtle.sign(
+        { name: "RSA-PSS", saltLength: 32 },
+        pair.privateKey,
+        enc.encode(data),
+      );
+      return btoa(String.fromCharCode(...new Uint8Array(signature)));
+    },
+  };
+}
+
 describe("PositionRoom operator commands", () => {
   const COMMAND_URL = "https://room.internal/api/live/command";
   const PULL_URL = "https://room.internal/api/live/commands";
+  const ROOM_OPERATOR_TOKEN = "room-operator-token";
+
+
+  function makeAuthorizedRoom(): { room: PositionRoom; storage: FakeAlarmStorage } {
+    // Queue mechanics tests authorize via the legacy bearer path so they
+    // stay focused on queueing, not credentials (auth matrix lives below).
+    const made = makeRoom({ LIVE_OPERATOR_TOKEN: ROOM_OPERATOR_TOKEN });
+    return { room: made.room, storage: made.storage };
+  }
 
   function postCommand(room: PositionRoom, body: string): Promise<Response> {
-    return room.fetch(new Request(COMMAND_URL, { method: "POST", body }));
+    return room.fetch(
+      new Request(COMMAND_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${ROOM_OPERATOR_TOKEN}`,
+        },
+        body,
+      }),
+    );
   }
 
   it("queues only schema-valid commands and acks them with monotonic ids", async () => {
-    const { room } = makeRoom();
+    const { room } = makeAuthorizedRoom();
 
     // Every acceptance and rejection path the ticket pins: unknown tag,
     // wrong mode, non-boolean engage, unconfirmed disarm.
@@ -486,7 +549,7 @@ describe("PositionRoom operator commands", () => {
   });
 
   it("refuses malformed command bodies before they reach the queue", async () => {
-    const { room } = makeRoom();
+    const { room } = makeAuthorizedRoom();
 
     const notJson = await postCommand(room, "{not json");
     expect(notJson.status).toBe(400);
@@ -503,7 +566,7 @@ describe("PositionRoom operator commands", () => {
   });
 
   it("serves queued commands to the runner by high-water id, oldest first", async () => {
-    const { room } = makeRoom();
+    const { room } = makeAuthorizedRoom();
 
     // Nothing queued yet: the pull answers with an honest empty 204.
     const empty = await room.fetch(new Request(PULL_URL));
@@ -516,16 +579,35 @@ describe("PositionRoom operator commands", () => {
     expect(all.status).toBe(200);
     expect(all.headers.get("content-type")).toContain("application/x-ndjson");
     const lines = (await all.text()).trim().split("\n").map((line) => JSON.parse(line));
+    // Every envelope carries the worker-attested issuer and the queue
+    // timestamp alongside the command — attribution survives to the runner.
     expect(lines).toEqual([
-      { id: 1, command: { t: "kill-switch", engage: false, confirm: true } },
-      { id: 2, command: { t: "kill-switch", engage: true } },
+      {
+        id: 1,
+        receivedAtEpochMs: expect.any(Number),
+        operator: "anonymous-operator-token",
+        command: { t: "kill-switch", engage: false, confirm: true },
+      },
+      {
+        id: 2,
+        receivedAtEpochMs: expect.any(Number),
+        operator: "anonymous-operator-token",
+        command: { t: "kill-switch", engage: true },
+      },
     ]);
 
     // The runner acknowledges ids as it applies them; a pull from its
     // high-water mark yields only newer work.
     const newer = await room.fetch(new Request(`${PULL_URL}?afterId=1`));
     const newerLines = (await newer.text()).trim().split("\n").map((l) => JSON.parse(l));
-    expect(newerLines).toEqual([{ id: 2, command: { t: "kill-switch", engage: true } }]);
+    expect(newerLines).toEqual([
+      {
+        id: 2,
+        receivedAtEpochMs: expect.any(Number),
+        operator: "anonymous-operator-token",
+        command: { t: "kill-switch", engage: true },
+      },
+    ]);
 
     const caughtUp = await room.fetch(new Request(`${PULL_URL}?afterId=2`));
     expect(caughtUp.status).toBe(204);
@@ -594,5 +676,347 @@ describe("PositionRoom operator commands", () => {
 
     const snapshot = viewer.frames().findLast((f) => f.t === "snapshot")!;
     expect(snapshot.fills).toEqual([fill]);
+  });
+});
+
+describe("PositionRoom operator authentication", () => {
+  const KEY_ID = "test-key-id-0001";
+  const AUTH = "https://room.internal/api/live/auth";
+
+  function post(room: PositionRoom, path: string, body?: unknown, cookie?: string): Promise<Response> {
+    return room.fetch(
+      new Request(`${AUTH}/${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-arbkit-console": "1",
+          ...(cookie !== undefined ? { cookie } : {}),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      }),
+    );
+  }
+
+  it("fails closed when no operator roster is configured", async () => {
+    const { room } = makeRoom();
+    expect((await post(room, "challenge", { keyId: KEY_ID })).status).toBe(503);
+    expect((await post(room, "login", { keyId: KEY_ID, nonce: "n", signature: "s" })).status).toBe(
+      503,
+    );
+
+    // A malformed roster is the same failure mode — never open.
+    const broken = makeRoom({ LIVE_OPERATOR_ROSTER: "{not json" });
+    expect((await post(broken.room, "challenge", { keyId: KEY_ID })).status).toBe(503);
+  });
+
+  it("runs the full challenge → sign → login → session flow over HTTP", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    try {
+      const key = await makeOperatorKey();
+      const { room } = makeRoom(key.rosterEnv);
+
+      const challengeResponse = await post(room, "challenge", { keyId: KEY_ID });
+      expect(challengeResponse.status).toBe(200);
+      const challenge = (await challengeResponse.json()) as {
+        nonce: string;
+        issuedAtMs: number;
+      };
+      const preimage = [
+        "arbkit-dashboard-login",
+        KEY_ID,
+        challenge.nonce,
+        String(challenge.issuedAtMs),
+      ].join("\n");
+
+      const loginResponse = await post(room, "login", {
+        keyId: KEY_ID,
+        nonce: challenge.nonce,
+        signature: await key.sign(preimage),
+      });
+      expect(loginResponse.status).toBe(200);
+      const loginBody = (await loginResponse.json()) as { operator: string };
+      expect(loginBody.operator).toBe("harlan");
+
+      const cookieHeader = loginResponse.headers.get("set-cookie") ?? "";
+      expect(cookieHeader).toContain("arbkit_session=");
+      expect(cookieHeader).toContain("HttpOnly");
+      expect(cookieHeader).toContain("Secure");
+      expect(cookieHeader).toContain("SameSite=Strict");
+
+      const token = /arbkit_session=([^;]+)/.exec(cookieHeader)?.[1] ?? "";
+      const whoami = await room.fetch(
+        new Request(`${AUTH}/session`, { headers: { cookie: `arbkit_session=${token}` } }),
+      );
+      expect(whoami.status).toBe(200);
+      expect(await whoami.json()).toMatchObject({ operator: "harlan", keyId: KEY_ID });
+
+      // Logout kills the server-side session; the old cookie is dead weight.
+      const logout = await post(room, "logout", {}, `arbkit_session=${token}`);
+      expect(logout.status).toBe(200);
+      const afterLogout = await room.fetch(
+        new Request(`${AUTH}/session`, { headers: { cookie: `arbkit_session=${token}` } }),
+      );
+      expect(afterLogout.status).toBe(401);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("answers every credential failure with the same uniform 401", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    try {
+      const key = await makeOperatorKey();
+      const { room } = makeRoom(key.rosterEnv);
+
+      // Unknown key id: identical shape to a bad signature — no enumeration.
+      expect((await post(room, "challenge", { keyId: "who-is-this" })).status).toBe(401);
+
+      const challengeResponse = await post(room, "challenge", { keyId: KEY_ID });
+      const challenge = (await challengeResponse.json()) as { nonce: string; issuedAtMs: number };
+
+      // Bad signature.
+      expect(
+        (await post(room, "login", { keyId: KEY_ID, nonce: challenge.nonce, signature: "AAAA" }))
+          .status,
+      ).toBe(401);
+
+      // Correct signature but stale by one millisecond past the budget.
+      vi.setSystemTime(Date.now() + 121_000);
+      const preimage = [
+        "arbkit-dashboard-login",
+        KEY_ID,
+        challenge.nonce,
+        String(challenge.issuedAtMs),
+      ].join("\n");
+      expect(
+        (
+          await post(room, "login", {
+            keyId: KEY_ID,
+            nonce: challenge.nonce,
+            signature: await key.sign(preimage),
+          })
+        ).status,
+      ).toBe(401);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gates auth mutations on method and the console header, and validates bodies", async () => {
+    const key = await makeOperatorKey();
+    const { room } = makeRoom(key.rosterEnv);
+
+    // GET on a POST surface.
+    expect(
+      (await room.fetch(new Request(`${AUTH}/challenge`, { method: "GET" }))).status,
+    ).toBe(405);
+
+    // Missing console header (a cross-site form cannot send it).
+    const noHeader = await room.fetch(
+      new Request(`${AUTH}/challenge`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ keyId: KEY_ID }),
+      }),
+    );
+    expect(noHeader.status).toBe(403);
+
+    // Malformed bodies.
+    expect((await post(room, "challenge", {})).status).toBe(400);
+    expect((await post(room, "login", { keyId: KEY_ID })).status).toBe(400);
+
+    // Whoami without credentials behaves exactly like today's 401 path.
+    expect((await room.fetch(new Request(`${AUTH}/session`))).status).toBe(401);
+    const impostor = await room.fetch(
+      new Request(`${AUTH}/session`, { headers: { cookie: "arbkit_session=forged" } }),
+    );
+    expect(impostor.status).toBe(401);
+  });
+});
+
+describe("PositionRoom command authentication", () => {
+  const COMMAND_URL = "https://room.internal/api/live/command";
+  const PULL_URL = "https://room.internal/api/live/commands";
+  const AUTH = "https://room.internal/api/live/auth";
+  const KEY_ID = "test-key-id-0001";
+  const INGEST_TOKEN = "ingest-secret";
+
+  function postCommand(
+    room: PositionRoom,
+    body: string,
+    headers: Record<string, string> = {},
+  ): Promise<Response> {
+    return room.fetch(
+      new Request(COMMAND_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body,
+      }),
+    );
+  }
+
+  /** Runs the full challenge → sign → login flow and returns the session
+   * cookie value for the operator's first (and only) active session. */
+  async function loginCookie(
+    room: PositionRoom,
+    key: Awaited<ReturnType<typeof makeOperatorKey>>,
+  ): Promise<string> {
+    const challengeResponse = await room.fetch(
+      new Request(`${AUTH}/challenge`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-arbkit-console": "1" },
+        body: JSON.stringify({ keyId: KEY_ID }),
+      }),
+    );
+    const challenge = (await challengeResponse.json()) as {
+      nonce: string;
+      issuedAtMs: number;
+    };
+    const preimage = [
+      "arbkit-dashboard-login",
+      KEY_ID,
+      challenge.nonce,
+      String(challenge.issuedAtMs),
+    ].join("\n");
+    const loginResponse = await room.fetch(
+      new Request(`${AUTH}/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-arbkit-console": "1" },
+        body: JSON.stringify({
+          keyId: KEY_ID,
+          nonce: challenge.nonce,
+          signature: await key.sign(preimage),
+        }),
+      }),
+    );
+    expect(loginResponse.status).toBe(200);
+    const cookieHeader = loginResponse.headers.get("set-cookie") ?? "";
+    return /arbkit_session=([^;]+)/.exec(cookieHeader)?.[1] ?? "";
+  }
+
+  it("attests the verified session issuer on queued commands", async () => {
+    const key = await makeOperatorKey();
+    const { room } = makeRoom({ ...key.rosterEnv });
+    const cookie = await loginCookie(room, key);
+
+    // A client-supplied `operator` field must never become the issuer: zod
+    // strips it from the command, and the worker attests the session name.
+    const response = await postCommand(
+      room,
+      JSON.stringify({ t: "session-end", operator: "mallory" }),
+      { cookie: `arbkit_session=${cookie}` },
+    );
+    expect(response.status).toBe(202);
+
+    const pull = await room.fetch(new Request(`${PULL_URL}?afterId=0`));
+    const lines = (await pull.text()).trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      id: 1,
+      operator: "harlan",
+      command: { t: "session-end" },
+    });
+    expect(typeof lines[0]!.receivedAtEpochMs).toBe("number");
+    // The stripped field is gone from the stored command entirely.
+    expect(lines[0]!.command).not.toHaveProperty("operator");
+  });
+
+  it("refuses commands with an expired session exactly like a missing one", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    try {
+      const key = await makeOperatorKey();
+      const { room } = makeRoom({ ...key.rosterEnv });
+      const cookie = await loginCookie(room, key);
+
+      vi.setSystemTime(Date.now() + 3_600_000 + 1);
+      const expired = await postCommand(
+        room,
+        JSON.stringify({ t: "session-end" }),
+        { cookie: `arbkit_session=${cookie}` },
+      );
+      expect(expired.status).toBe(401);
+      expect(await expired.json()).toMatchObject({ error: "unauthorized" });
+
+      // No cookie at all: same answer.
+      const anonymous = await postCommand(room, JSON.stringify({ t: "session-end" }));
+      expect(anonymous.status).toBe(401);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the two-secrets rule: the ingest token never confers command authority", async () => {
+    const { room } = makeRoom({
+      LIVE_INGEST_TOKEN: INGEST_TOKEN,
+      LIVE_OPERATOR_TOKEN: "operator-secret",
+    });
+
+    const response = await postCommand(
+      room,
+      JSON.stringify({ t: "kill-switch", engage: true }),
+      { authorization: `Bearer ${INGEST_TOKEN}` },
+    );
+    expect(response.status).toBe(401);
+    // And with no operator authority configured at all, the surface refuses
+    // service rather than degrading open — matching the historical contract.
+    const unconfigured = makeRoom({ LIVE_INGEST_TOKEN: INGEST_TOKEN });
+    const refused = await postCommand(
+      unconfigured.room,
+      JSON.stringify({ t: "session-end" }),
+      { authorization: `Bearer ${INGEST_TOKEN}` },
+    );
+    expect(refused.status).toBe(503);
+  });
+
+  it("fails closed with 503 when neither sessions nor a token are configured", async () => {
+    const { room } = makeRoom({});
+
+    const response = await postCommand(room, JSON.stringify({ t: "session-end" }));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      error: expect.stringContaining("no operator authority configured"),
+    });
+  });
+
+  it("dual-accepts during migration with distinct attestation per path", async () => {
+    const key = await makeOperatorKey();
+    const ROOM_OPERATOR_TOKEN = "room-operator-token";
+    const { room } = makeRoom({
+      ...key.rosterEnv,
+      LIVE_OPERATOR_TOKEN: ROOM_OPERATOR_TOKEN,
+    });
+    const cookie = await loginCookie(room, key);
+
+    // Session holder → their verified name.
+    const viaSession = await postCommand(
+      room,
+      JSON.stringify({ t: "kill-switch", engage: false, confirm: true }),
+      { cookie: `arbkit_session=${cookie}` },
+    );
+    expect(viaSession.status).toBe(202);
+    // Bearer holder → the fixed legacy label, honestly not-a-person.
+    const viaBearer = await postCommand(
+      room,
+      JSON.stringify({ t: "kill-switch", engage: true }),
+      { authorization: `Bearer ${ROOM_OPERATOR_TOKEN}` },
+    );
+    expect(viaBearer.status).toBe(202);
+    // Wrong bearer while a roster exists → invalid credentials, not 503.
+    const wrongBearer = await postCommand(
+      room,
+      JSON.stringify({ t: "session-end" }),
+      { authorization: "Bearer nope" },
+    );
+    expect(wrongBearer.status).toBe(401);
+
+    const pull = await room.fetch(new Request(`${PULL_URL}?afterId=0`));
+    const lines = (await pull.text()).trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines.map((line) => line.operator)).toEqual([
+      "harlan",
+      "anonymous-operator-token",
+    ]);
   });
 });

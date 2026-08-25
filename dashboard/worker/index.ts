@@ -15,6 +15,13 @@ const INGEST_PATH = "/api/live/ingest";
 const WS_PATH = "/api/live/ws";
 const COMMAND_PATH = "/api/live/command";
 const RUNNER_COMMANDS_PATH = "/api/live/commands";
+// Operator authentication surfaces. These carry their own auth semantics
+// (challenge/login/logout/session) and are forwarded to the room ungated:
+// the room answers 503 fail-closed when no operator roster is configured.
+const AUTH_CHALLENGE_PATH = "/api/live/auth/challenge";
+const AUTH_LOGIN_PATH = "/api/live/auth/login";
+const AUTH_LOGOUT_PATH = "/api/live/auth/logout";
+const AUTH_SESSION_PATH = "/api/live/auth/session";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -22,8 +29,16 @@ export default {
 
     if (url.pathname === INGEST_PATH) return handleIngest(request, env);
     if (url.pathname === WS_PATH) return forwardToRoom(env, request);
-    if (url.pathname === COMMAND_PATH) return handleOperatorCommand(request, env);
+    if (url.pathname === COMMAND_PATH) return forwardToRoom(env, request);
     if (url.pathname === RUNNER_COMMANDS_PATH) return handleRunnerCommands(request, env);
+    if (
+      url.pathname === AUTH_CHALLENGE_PATH ||
+      url.pathname === AUTH_LOGIN_PATH ||
+      url.pathname === AUTH_LOGOUT_PATH ||
+      url.pathname === AUTH_SESSION_PATH
+    ) {
+      return forwardToRoom(env, request);
+    }
 
     // Everything else is the static SPA — including its client-side routes,
     // which `not_found_handling: "single-page-application"` covers through
@@ -41,16 +56,11 @@ async function handleIngest(request: Request, env: Env): Promise<Response> {
   return forwardToRoom(env, request);
 }
 
-/** The operator channel is a different secret on purpose: holding the ingest
- * token (the runner's push credential) must not confer authority to command. */
-async function handleOperatorCommand(request: Request, env: Env): Promise<Response> {
-  if (request.method !== "POST") {
-    return Response.json({ error: "method not allowed" }, { status: 405 });
-  }
-  const gate = requireBearer(request, env.LIVE_OPERATOR_TOKEN, "LIVE_OPERATOR_TOKEN");
-  if (gate !== null) return gate;
-  return forwardToRoom(env, request);
-}
+// The operator command surface is authenticated inside the room (HJ-311):
+// session validation needs the room's live session store, so the worker
+// edge forwards every command request and the room answers 401/503 itself.
+// The two-secrets rule is unchanged — LIVE_INGEST_TOKEN gates only ingest +
+// runner pulls here, and never confers authority to command.
 
 /** The runner pulls its queued commands with the same credential it pushes
  * ingest with; commands are delivered to it, not accepted from it. */

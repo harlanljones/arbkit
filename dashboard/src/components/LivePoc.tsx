@@ -26,6 +26,7 @@ import { money, percent } from "../data/metrics";
 import type { RiskState } from "../data/liveSchema";
 import { STREAM_SILENT_AFTER_MS } from "../data/liveSession";
 import type { TradeRecord } from "../data/schema";
+import { useAuthIdentity } from "../data/useAuthIdentity";
 import { useLiveSession } from "../data/useLiveSession";
 import { useOperator } from "../data/useOperator";
 import { OperatorConsole } from "./OperatorConsole";
@@ -80,6 +81,7 @@ export function LivePoc({
   const streamUrl = url ?? defaultLiveUrl();
   const live = useLiveSession(streamUrl);
   const operator = useOperator();
+  const identity = useAuthIdentity();
   const now = useNowTick();
 
   const recentRows = useMemo(
@@ -138,7 +140,7 @@ export function LivePoc({
           session header earns the numbers grid. The operator console is the
           one surface that renders even while idle: posture is always worth
           showing, and it fails inert without a connection. */}
-      <OperatorConsole live={live} operator={operator} />
+      <OperatorConsole live={live} operator={operator} identity={identity} />
 
       {live.session === null || live.totals === null ? (
         <IdleNotice connecting={live.connection !== "open"} />

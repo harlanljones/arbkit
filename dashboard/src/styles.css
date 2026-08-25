@@ -1869,6 +1869,11 @@ footer a {
   color: var(--muted, #5c5a52);
 }
 
+.command-audit-operator {
+  border: 1px solid var(--rule);
+  padding: 2px 8px;
+}
+
 .command-audit-error {
   color: var(--copper, #9a4d2f);
   overflow-wrap: anywhere;

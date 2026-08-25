@@ -16,6 +16,15 @@ import {
   snapshotFrame,
   totalsFrame,
 } from "./state";
+import {
+  CLEAR_SESSION_COOKIE,
+  CONSOLE_HEADER,
+  OperatorAuth,
+  parseRoster,
+  readSessionToken,
+  sessionCookie,
+  SESSION_TTL_MS,
+} from "./session";
 import { operatorCommandSchema, runnerFrameSchema } from "./wire";
 import type { OperatorCommand } from "./wire";
 
@@ -24,6 +33,9 @@ import type { OperatorCommand } from "./wire";
 const MAX_INGEST_BYTES = 512 * 1024;
 /** Command bodies are three tiny shapes; anything larger is refused unread. */
 const MAX_COMMAND_BYTES = 4 * 1024;
+/** Auth bodies are one key id / one challenge answer; anything larger is
+ * refused unread. */
+const MAX_AUTH_BYTES = 2 * 1024;
 /** How far ahead the staleness alarm is scheduled after activity. */
 const STALE_CHECK_MS = 10_000;
 /** Retained operator commands. The runner pulls by id, so a brief offline
@@ -36,24 +48,40 @@ export interface Env {
   POSITION_ROOM: DurableObjectNamespace;
   LIVE_INGEST_TOKEN?: string;
   LIVE_OPERATOR_TOKEN?: string;
+  /** JSON roster of operators: `[{keyId, name, publicKeyPem}]` (SPKI public
+   * keys only). Absent or malformed refuses all authentication — fail closed. */
+  LIVE_OPERATOR_ROSTER?: string;
 }
 
 interface QueuedCommand {
   id: number;
   receivedAtEpochMs: number;
+  /** The worker's own attestation of who issued this: a verified session
+   * name, or the fixed legacy label while the shared bearer token still
+   * works (HJ-313 decides its fate). Never accepted from client input. */
+  operator: string;
   command: OperatorCommand;
 }
+
+/** What the legacy shared token can attest: that an anonymous holder of the
+ * secret presented it. A person's name comes only from a verified session. */
+const LEGACY_BEARER_OPERATOR = "anonymous-operator-token";
 
 export class PositionRoom {
   private readonly viewers = new Set<WebSocket>();
   private readonly session = new PositionSession();
   private readonly commandQueue: QueuedCommand[] = [];
+  private readonly auth: OperatorAuth;
+  private readonly env: Env;
   private nextCommandId = 1;
 
   constructor(
     private readonly ctx: DurableObjectState,
-    _env: Env,
-  ) {}
+    env: Env,
+  ) {
+    this.env = env;
+    this.auth = new OperatorAuth(parseRoster(env.LIVE_OPERATOR_ROSTER));
+  }
 
   async fetch(request: Request): Promise<Response> {
     const { pathname } = new URL(request.url);
@@ -61,20 +89,66 @@ export class PositionRoom {
     if (pathname.endsWith("/ws")) return this.handleViewer(request);
     if (pathname.endsWith("/command")) return this.handleOperatorCommand(request);
     if (pathname.endsWith("/commands")) return this.handleRunnerCommands(request);
+    if (pathname.endsWith("/auth/challenge")) return this.handleAuthChallenge(request);
+    if (pathname.endsWith("/auth/login")) return this.handleAuthLogin(request);
+    if (pathname.endsWith("/auth/logout")) return this.handleAuthLogout(request);
+    if (pathname.endsWith("/auth/session")) return this.handleAuthStatus(request);
     return new Response("not found", { status: 404 });
   }
 
   // -- operator commands ----------------------------------------------------
 
-  /** Accepts one operator command for the queue. Authentication happened at
-   * the worker edge; this is where the body earns its place — schema first,
-   * then queue. The 202 means "queued", never "applied": only the runner's
-   * risk gate can apply a command, and its `risk` frames are how everyone
-   * learns that actually happened. */
+  /** Command authority lives HERE, next to the session store it checks —
+   * not at the worker edge, which cannot see sessions. Priority: a verified
+   * operator session attests its name; during migration the shared bearer
+   * token still works and attests only itself; with no mechanism configured
+   * the surface refuses service exactly as before (fail closed). */
+  private commandIssuer(
+    request: Request,
+  ): { ok: true; operator: string } | { ok: false; status: number; error: string } {
+    const session = this.auth.validate(readSessionToken(request), Date.now());
+    if (session !== null) return { ok: true, operator: session.operator };
+
+    const configured = this.env.LIVE_OPERATOR_TOKEN;
+    const presented = request.headers.get("authorization") ?? "";
+    if (
+      configured !== undefined &&
+      PositionRoom.timingSafeEqual(presented, `Bearer ${configured}`)
+    ) {
+      return { ok: true, operator: LEGACY_BEARER_OPERATOR };
+    }
+    if (configured === undefined && !this.auth.available) {
+      return {
+        ok: false,
+        status: 503,
+        error:
+          "no operator authority configured (set LIVE_OPERATOR_TOKEN or provision LIVE_OPERATOR_ROSTER)",
+      };
+    }
+    return { ok: false, status: 401, error: "unauthorized" };
+  }
+
+  /** Length-then-byte comparison; same rationale as the worker edge. */
+  private static timingSafeEqual(presented: string, expected: string): boolean {
+    if (presented.length !== expected.length) return false;
+    let mismatch = 0;
+    for (let index = 0; index < expected.length; index += 1) {
+      mismatch |= presented.charCodeAt(index) ^ expected.charCodeAt(index);
+    }
+    return mismatch === 0;
+  }
+
+  /** Accepts one operator command for the queue. Authentication happens here
+   * first — a request that carries no authority never reaches parsing. The
+   * 202 means "queued", never "applied": only the runner's risk gate can
+   * apply a command, and its `risk` frames are how everyone learns that
+   * actually happened. */
   private async handleOperatorCommand(request: Request): Promise<Response> {
     if (request.method !== "POST") {
       return jsonError(405, "method not allowed");
     }
+    const issuer = this.commandIssuer(request);
+    if (!issuer.ok) return jsonError(issuer.status, issuer.error);
     const declared = Number(request.headers.get("content-length") ?? "0");
     if (declared > MAX_COMMAND_BYTES) {
       return jsonError(413, "command too large");
@@ -100,6 +174,7 @@ export class PositionRoom {
     this.commandQueue.push({
       id,
       receivedAtEpochMs: Date.now(),
+      operator: issuer.operator,
       command: command.data,
     });
     if (this.commandQueue.length > COMMAND_QUEUE_CAPACITY) {
@@ -112,8 +187,10 @@ export class PositionRoom {
   }
 
   /** The runner's pull endpoint: everything queued after `afterId`, oldest
-   * first, as NDJSON envelopes. Delivery is at-least-once — the runner must
-   * apply each command idempotently and remember its own high-water id. */
+   * first, as NDJSON envelopes carrying the worker-attested issuer and the
+   * queue timestamp alongside each command. Delivery is at-least-once — the
+   * runner must apply each command idempotently and remember its own
+   * high-water id. Old runners ignore the extra fields (serde default). */
   private handleRunnerCommands(request: Request): Response {
     if (request.method !== "GET") {
       return jsonError(405, "method not allowed");
@@ -128,11 +205,142 @@ export class PositionRoom {
       return new Response(null, { status: 204 });
     }
     const body = pending
-      .map((entry) => JSON.stringify({ id: entry.id, command: entry.command }))
+      .map((entry) =>
+        JSON.stringify({
+          id: entry.id,
+          receivedAtEpochMs: entry.receivedAtEpochMs,
+          operator: entry.operator,
+          command: entry.command,
+        }),
+      )
       .join("\n");
     return new Response(`${body}\n`, {
       status: 200,
       headers: { "content-type": "application/x-ndjson" },
+    });
+  }
+
+  // -- operator authentication ----------------------------------------------
+
+  /** Every auth mutation must carry the console header: cross-site forms
+   * cannot send it without a CORS preflight, which closes the CSRF path the
+   * SameSite=Strict cookie does not already cover. */
+  private static readonly JSON_BODY_LIMIT = MAX_AUTH_BYTES;
+
+  private static consoleGuarded(request: Request): boolean {
+    return (
+      request.headers.get(CONSOLE_HEADER) !== null &&
+      (request.headers.get("content-type") ?? "").includes("application/json")
+    );
+  }
+
+  private static async readJsonBody<T>(request: Request): Promise<T | null> {
+    const declared = Number(request.headers.get("content-length") ?? "0");
+    if (declared > PositionRoom.JSON_BODY_LIMIT) return null;
+    try {
+      const body = await request.text();
+      if (body.length > PositionRoom.JSON_BODY_LIMIT) return null;
+      return JSON.parse(body) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Step one of login: a single-use nonce bound to a roster key. Unknown
+   * key ids get the same uniform 401 as a bad signature — responses never
+   * enumerate the roster. */
+  private async handleAuthChallenge(request: Request): Promise<Response> {
+    if (request.method !== "POST") return jsonError(405, "method not allowed");
+    if (!PositionRoom.consoleGuarded(request)) return jsonError(403, "missing console header");
+    const body = await PositionRoom.readJsonBody<{ keyId?: unknown }>(request);
+    if (body === null || typeof body.keyId !== "string" || body.keyId === "") {
+      return jsonError(400, "keyId required");
+    }
+    if (!this.auth.available) {
+      return Response.json(
+        { error: "operator authentication not configured" },
+        { status: 503 },
+      );
+    }
+    const challenge = this.auth.issueChallenge(body.keyId, Date.now());
+    if (challenge === null) return jsonError(401, "authentication failed");
+    return Response.json(challenge);
+  }
+
+  /** Step two of login: verify the challenge signature against the roster's
+   * registered public key and issue the session cookie. */
+  private async handleAuthLogin(request: Request): Promise<Response> {
+    if (request.method !== "POST") return jsonError(405, "method not allowed");
+    if (!PositionRoom.consoleGuarded(request)) return jsonError(403, "missing console header");
+    const body = await PositionRoom.readJsonBody<{
+      keyId?: unknown;
+      nonce?: unknown;
+      signature?: unknown;
+    }>(request);
+    if (
+      body === null ||
+      typeof body.keyId !== "string" ||
+      typeof body.nonce !== "string" ||
+      typeof body.signature !== "string"
+    ) {
+      return jsonError(400, "keyId, nonce and signature required");
+    }
+    if (!this.auth.available) {
+      return Response.json(
+        { error: "operator authentication not configured" },
+        { status: 503 },
+      );
+    }
+    const result = await this.auth.login(
+      body.keyId,
+      body.nonce,
+      body.signature,
+      Date.now(),
+    );
+    if (!result.ok) return jsonError(401, "authentication failed");
+    const maxAgeSec = Math.floor(SESSION_TTL_MS / 1000);
+    return new Response(
+      JSON.stringify({
+        operator: result.session.operator,
+        keyId: result.session.keyId,
+        expiresAtEpochMs: result.session.expiresAtEpochMs,
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "set-cookie": sessionCookie(result.session.token, maxAgeSec),
+        },
+      },
+    );
+  }
+
+  /** Revocation is server-side first: the session dies in the room whether or
+   * not the client keeps the cookie. */
+  private handleAuthLogout(request: Request): Response {
+    if (request.method !== "POST") return jsonError(405, "method not allowed");
+    if (!PositionRoom.consoleGuarded(request)) return jsonError(403, "missing console header");
+    const token = readSessionToken(request);
+    this.auth.logout(token);
+    return new Response(JSON.stringify({ loggedOut: true }), {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "set-cookie": CLEAR_SESSION_COOKIE,
+      },
+    });
+  }
+
+  /** Whoami for the console UI. An expired session answers exactly like a
+   * missing one — 401 — because from outside there is no difference. */
+  private handleAuthStatus(request: Request): Response {
+    if (request.method !== "GET") return jsonError(405, "method not allowed");
+    const session = this.auth.validate(readSessionToken(request), Date.now());
+    if (session === null) return jsonError(401, "authentication failed");
+    return Response.json({
+      operator: session.operator,
+      keyId: session.keyId,
+      expiresAtEpochMs: session.expiresAtEpochMs,
     });
   }
 

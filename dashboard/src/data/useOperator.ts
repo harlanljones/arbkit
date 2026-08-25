@@ -31,10 +31,21 @@ export interface CommandAuditEntry {
   sentAtMs: number;
   status: "refused" | "queued";
   error?: string;
+  /** The worker-attested operator name for the session that sent this, as
+   * reported by `/api/live/auth/session`. Absent means unattributed: no
+   * session existed (break-glass bearer path) or the entry predates
+   * identity on the wire. Rendered as "—", never invented. */
+  issuer?: string;
+}
+
+/** Per-send attribution context. The console fills it from its cached,
+ * server-attested session identity; the worker re-verifies independently. */
+export interface SendContext {
+  issuer?: string;
 }
 
 export interface OperatorController {
-  send: (command: OperatorCommand) => Promise<OperatorSendResult>;
+  send: (command: OperatorCommand, context?: SendContext) => Promise<OperatorSendResult>;
   /** A POST is on the wire. Commands are one-at-a-time so the console can
    * never interleave two orders of operations. */
   pending: boolean;
@@ -70,7 +81,7 @@ export function useOperator(url?: string): OperatorController {
   }, []);
 
   const send = useCallback(
-    async (command: OperatorCommand): Promise<OperatorSendResult> => {
+    async (command: OperatorCommand, context?: SendContext): Promise<OperatorSendResult> => {
       if (inFlight.current) {
         // A local guard, not a worker verdict: nothing reached anyone, so
         // there is nothing to audit.
@@ -98,6 +109,7 @@ export function useOperator(url?: string): OperatorController {
             command,
             sentAtMs,
             status: "queued",
+            issuer: context?.issuer,
           });
           return { ok: true, queuedId: queuedId ?? -1 };
         }
@@ -113,6 +125,7 @@ export function useOperator(url?: string): OperatorController {
           sentAtMs: Date.now(),
           status: "refused",
           error: message,
+          issuer: context?.issuer,
         });
         return { ok: false, error: message };
       } catch (error) {
@@ -124,6 +137,7 @@ export function useOperator(url?: string): OperatorController {
           sentAtMs: Date.now(),
           status: "refused",
           error: message,
+          issuer: context?.issuer,
         });
         return { ok: false, error: message };
       } finally {

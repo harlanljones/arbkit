@@ -51,7 +51,7 @@ function fakeOperator(
 ): OperatorController & { commands: OperatorCommand[] } {
   const commands: OperatorCommand[] = [];
   return {
-    send: async (command) => {
+    send: async (command, _context) => {
       commands.push(command);
       return { ok: true, queuedId: commands.length };
     },
@@ -393,5 +393,53 @@ describe("OperatorConsole", () => {
     const trail = screen.getByTestId("command-audit");
     expect(within(trail).getByText("End session")).toBeInTheDocument();
     expect(within(trail).getByText("In effect")).toBeInTheDocument();
+  });
+
+  it("shows the worker-attested issuer per row and — for unattributed sends", () => {
+    const sentAt = Date.parse("2026-08-24T12:00:00Z");
+    const entries: CommandAuditEntry[] = [
+      // Attributed queued command: the session name rides the row.
+      {
+        id: 5,
+        command: { t: "kill-switch", engage: false, confirm: true },
+        sentAtMs: sentAt,
+        status: "queued",
+        issuer: "harlan",
+      },
+      // Refusals keep their verbatim reason AND their attribution.
+      {
+        id: null,
+        command: { t: "session-start", mode: "live" },
+        sentAtMs: sentAt - 1_000,
+        status: "refused",
+        error: "command failed schema validation",
+        issuer: "harlan",
+      },
+      // Unattributed (break-glass or pre-identity): an honest dash.
+      {
+        id: 2,
+        command: { t: "session-end" },
+        sentAtMs: sentAt - 2_000,
+        status: "queued",
+      },
+    ];
+    render(
+      <OperatorConsole
+        live={liveState({ connection: "open", sessionStatus: "ended", risk: ENGAGED_LIVE })}
+        operator={fakeOperator({ auditLog: entries })}
+      />,
+    );
+
+    const trail = screen.getByTestId("command-audit");
+    const rows = within(trail).getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    expect(within(rows[0]).getByText("harlan")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("harlan")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("command failed schema validation")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("—")).toBeInTheDocument();
+    // Lifecycle semantics untouched by the identity column: the disarm sits
+    // queued against the engaged posture; the end-command reads in effect.
+    expect(within(trail).getAllByText("In effect")).toHaveLength(1);
+    expect(within(rows[0]).getByText("Queued")).toBeInTheDocument();
   });
 });

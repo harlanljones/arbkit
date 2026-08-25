@@ -126,6 +126,14 @@ describe("LivePoc", () => {
     vi.useFakeTimers();
     MockSocket.instances = [];
     vi.stubGlobal("WebSocket", MockSocket as unknown as typeof WebSocket);
+    // The console's identity probe fires one fetch on mount; answer it
+    // hermetically (401 = unauthenticated console).
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })),
+      ),
+    );
   });
 
   afterEach(() => {

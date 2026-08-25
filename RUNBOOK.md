@@ -45,6 +45,8 @@ fi
   both venues' books must see `true` before starting (§1). Never echo the
   key id or key path value — presence is the only signal the posture check
   reads (finding F3).
+- Operator command authority — roster sessions vs. break-glass token, login,
+  revocation, rotation — is governed by §9.
 
 ## 1. Session start / stop
 
@@ -206,3 +208,63 @@ Start with `--micro` to clamp policy before anything transmits:
 A negative live ROI or a phantom rate above the paper baseline is a **valid
 finding**: it falsifies the synthetic assumption. Record it as a dated row in
 `RESULTS.md`; never relabel, recompute, or widen tolerance until it passes.
+
+## 9. Operator access control
+
+Who may command the runner, how they prove it, and how access ends. The
+console queues commands; it never applies them, and it never holds venue
+trading credentials.
+
+### Provisioning
+
+- Operators live in the worker secret `LIVE_OPERATOR_ROSTER`: JSON of the
+  form `[{"keyId": "...", "name": "...", "publicKeyPem": "-----BEGIN PUBLIC
+  KEY-----..."}]` — SPKI **public** keys only (the verifier refuses private
+  keys outright).
+- Update with `npx wrangler secret put LIVE_OPERATOR_ROSTER`. The update
+  takes effect when the room recycles: sessions are in-memory per isolate,
+  so a roster change drops all sessions and re-reads the roster.
+- With no roster AND no break-glass token configured, every command attempt
+  answers `503` — fail closed, never open.
+
+### Login
+
+1. Request a challenge: `POST /api/live/auth/challenge` with
+   `{"keyId": "..."}` and header `x-arbkit-console: 1`.
+2. Sign the returned preimage locally with your Kalshi API private key:
+   newline-joined `arbkit-dashboard-login`, keyId, nonce, issuedAtMs,
+   RSA-PSS SHA-256 (salt length 32), base64. The private key never leaves
+   your machine.
+3. `POST /api/live/auth/login` with `{keyId, nonce, signature}` → an
+   httpOnly session cookie (1 h). One active session per operator; a new
+   login retires the previous one.
+
+### Revoking
+
+- **One session:** `POST /api/live/auth/logout` with that session's cookie.
+- **An operator entirely:** remove their entry from the roster and update
+  the secret. After recycle they cannot log in and their prior sessions are
+  gone (session state does not survive the recycle).
+- **All operator access immediately:** clear the roster secret; commands
+  answer 503 until a roster returns. The runner is unaffected — it
+  authenticates with `LIVE_INGEST_TOKEN`, a different secret.
+
+### Break-glass token
+
+- While `LIVE_OPERATOR_TOKEN` is set on the worker, presenting it as a
+  bearer credential still queues commands. These are attributed
+  `anonymous-operator-token` in the queue and audit trail — exactly that,
+  because the token attests nothing about a person.
+- This is a demotion, not an endorsement: retire it by deleting the secret
+  once the console login UI ships. Rotation is `wrangler secret put`
+  effective at the edge; rotate after any suspected disclosure.
+- Rotating `LIVE_INGEST_TOKEN` follows the same flow — update the runner's
+  environment in the same window or its pushes and command pulls 401.
+
+### Which world am I in
+
+The dashboard command trail shows each command's issuer: your roster name
+means a verified session queued it; `anonymous-operator-token` means the
+break-glass path did. The runner's log carries the same attribution per
+applied or refused command (`operator=...`; self-reported fallbacks are
+labeled as such).

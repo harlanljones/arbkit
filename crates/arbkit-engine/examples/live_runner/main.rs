@@ -668,7 +668,10 @@ fn main() {
             Ok(envelopes) => {
                 for envelope in envelopes {
                     last_command_id = last_command_id.max(envelope.id);
-                    match envelope.command {
+                    // Borrow the issuer label for the log lines, and match
+                    // the command by reference so no field moves.
+                    let issuer = envelope.issuer();
+                    match &envelope.command {
                         OperatorCommand::KillSwitch { engage, confirm } => {
                             // A disarming command without an explicit
                             // confirmation is refused: the console's checkbox
@@ -676,17 +679,19 @@ fn main() {
                             // this is a final independent guard.
                             if !engage && !confirm {
                                 eprintln!(
-                                    "[control] REFUSED disarm command #{} (no explicit confirmation)",
-                                    envelope.id
+                                    "[control] REFUSED disarm command #{} (no explicit \
+                                     confirmation) operator={}",
+                                    envelope.id, issuer
                                 );
                                 continue;
                             }
-                            if kill_switch_engaged != engage {
-                                kill_switch_engaged = engage;
+                            if kill_switch_engaged != *engage {
+                                kill_switch_engaged = *engage;
                                 println!(
-                                    "[control] kill switch {} by command #{}",
-                                    if engage { "ENGAGED" } else { "disarmed" },
-                                    envelope.id
+                                    "[control] kill switch {} by command #{} operator={}",
+                                    if *engage { "ENGAGED" } else { "disarmed" },
+                                    envelope.id,
+                                    issuer
                                 );
                                 stream.send(LiveFrame::Risk {
                                     state: RiskStateFrame::paper(kill_switch_engaged),
@@ -695,8 +700,8 @@ fn main() {
                         }
                         OperatorCommand::SessionEnd => {
                             println!(
-                                "[control] session end requested by command #{}",
-                                envelope.id
+                                "[control] session end requested by command #{} operator={}",
+                                envelope.id, issuer
                             );
                             operator_end_requested = true;
                         }
@@ -705,9 +710,10 @@ fn main() {
                             // per process. A supervisor that can open fresh
                             // sessions is a production-runner concern.
                             println!(
-                                "[control] session start ({mode}) requested by command #{}; \
-                                 this runner streams exactly one session per process — ignored",
-                                envelope.id
+                                "[control] session start ({mode}) requested by command #{} \
+                                 operator={}; this runner streams exactly one session per \
+                                 process — ignored",
+                                envelope.id, issuer
                             );
                         }
                     }

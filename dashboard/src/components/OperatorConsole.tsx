@@ -16,7 +16,12 @@ import { money } from "../data/metrics";
 import type { FillRecord } from "../data/liveSchema";
 import type { TradeRecord } from "../data/schema";
 import type { LiveSessionState } from "../data/liveSession";
-import type { CommandAuditEntry, OperatorCommand, OperatorController } from "../data/useOperator";
+import type {
+  CommandAuditEntry,
+  OperatorCommand,
+  OperatorController,
+} from "../data/useOperator";
+import type { AuthIdentity } from "../data/useAuthIdentity";
 
 const FILL_FEED_ROWS = 12;
 /** Rows shown in the command trail, newest first. */
@@ -25,15 +30,24 @@ const AUDIT_VISIBLE_ROWS = 12;
 export function OperatorConsole({
   live,
   operator,
+  identity,
 }: {
   live: LiveSessionState;
   operator: OperatorController;
+  /** Server-attested identity for this console's session, or null when
+   * unauthenticated. Stamped onto audit entries at send time; the worker
+   * re-verifies independently on the queue. */
+  identity?: AuthIdentity;
 }) {
   const [mode, setMode] = useState<"paper" | "live">("paper");
   const [liveConfirmed, setLiveConfirmed] = useState(false);
   const [disarmConfirmed, setDisarmConfirmed] = useState(false);
 
   const risk = live.risk;
+  // The worker-attested name for this console's session, stamped onto
+  // every audited send. Undefined when unauthenticated — the trail then
+  // shows an honest dash.
+  const issuer = identity?.operator ?? undefined;
   // Unknown posture is engaged: the safe direction, always.
   const killSwitchEngaged = risk === null || risk.killSwitch;
   const connected = live.connection === "open";
@@ -121,7 +135,7 @@ export function OperatorConsole({
             type="button"
             onClick={() => {
               setDisarmConfirmed(false);
-              void operator.send({ t: "kill-switch", engage: false, confirm: true });
+              void operator.send({ t: "kill-switch", engage: false, confirm: true }, { issuer });
             }}
             disabled={disarmDisabled}
           >
@@ -129,7 +143,7 @@ export function OperatorConsole({
           </button>
           <button
             type="button"
-            onClick={() => void operator.send({ t: "kill-switch", engage: true })}
+            onClick={() => void operator.send({ t: "kill-switch", engage: true }, { issuer })}
             disabled={armDisabled}
           >
             Arm
@@ -169,7 +183,7 @@ export function OperatorConsole({
             type="button"
             onClick={() => {
               setLiveConfirmed(false);
-              void operator.send({ t: "session-start", mode });
+              void operator.send({ t: "session-start", mode }, { issuer });
             }}
             disabled={startDisabled}
           >
@@ -177,7 +191,7 @@ export function OperatorConsole({
           </button>
           <button
             type="button"
-            onClick={() => void operator.send({ t: "session-end" })}
+            onClick={() => void operator.send({ t: "session-end" }, { issuer })}
             disabled={endDisabled}
           >
             End session
@@ -311,9 +325,12 @@ function CommandAuditTrail({
       ) : (
         <>
           <p className="method-note">
-            Commands this console sent, newest first. "In effect" reads the
-            runner's own risk and session frames — queuing never implies
-            application.
+            Commands this console sent, newest first. The issuer is the
+            operator identity the worker attested for the session that sent
+            it — a dash marks unattributed sends (break-glass token, or
+            entries from before identity existed on the wire). "In effect"
+            reads the runner's own risk and session frames; queuing never
+            implies application.
           </p>
           <ol className="command-audit-list">
             {entries.slice(0, AUDIT_VISIBLE_ROWS).map((entry, index) => {
@@ -323,6 +340,9 @@ function CommandAuditTrail({
                 <li key={`${entry.sentAtMs}-${index}`}>
                   <span className="command-audit-action">
                     {auditActionLabel(entry.command)}
+                  </span>
+                  <span className="command-audit-operator">
+                    {entry.issuer ?? "—"}
                   </span>
                   {entry.id !== null && (
                     <span className="command-audit-id">#{entry.id}</span>

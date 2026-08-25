@@ -35,11 +35,28 @@ pub enum OperatorCommand {
     },
 }
 
-/// Wire envelope from the pull endpoint: monotonic id plus the command.
+/// Wire envelope from the pull endpoint: monotonic id plus the command, and —
+/// from workers that authenticate operators (HJ-311) — the worker-attested
+/// issuer. Older workers omit it; serde's default fills `None`, so old and
+/// new sides interoperate in both directions.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct CommandEnvelope {
     pub id: u64,
     pub command: OperatorCommand,
+    #[serde(default)]
+    pub operator: Option<String>,
+}
+
+impl CommandEnvelope {
+    /// Who the worker says issued this command, for runbook logs. A missing
+    /// issuer is printed as exactly that — never dressed up as a name.
+    /// The paper runner logs it on every arm; the production runner keeps
+    /// its richer self-reported fallback, so this stays unused in that
+    /// compilation unit by design (wire-contract completeness).
+    #[allow(dead_code)]
+    pub fn issuer(&self) -> &str {
+        self.operator.as_deref().unwrap_or("unattributed")
+    }
 }
 
 /// Derives the pull endpoint from the configured ingest URL: same origin and
@@ -134,6 +151,24 @@ mod tests {
             .is_err(),
             "non-boolean engage must not deserialize"
         );
+    }
+
+    #[test]
+    fn carries_the_worker_attested_issuer_when_present_and_defaults_when_absent() {
+        let attributed = serde_json::from_str::<CommandEnvelope>(
+            r#"{"id":3,"operator":"harlan","command":{"t":"session-end"}}"#,
+        )
+        .expect("attributed envelope parses");
+        assert_eq!(attributed.issuer(), "harlan");
+
+        // Pre-identity workers omit the field entirely; old envelopes must
+        // keep deserializing against new runners.
+        let legacy = serde_json::from_str::<CommandEnvelope>(
+            r#"{"id":4,"command":{"t":"kill-switch","engage":true}}"#,
+        )
+        .expect("legacy envelope parses");
+        assert_eq!(legacy.operator, None);
+        assert_eq!(legacy.issuer(), "unattributed");
     }
 
     #[test]

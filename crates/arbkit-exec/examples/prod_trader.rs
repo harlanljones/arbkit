@@ -1740,6 +1740,14 @@ fn main() {
             Ok(envelopes) => {
                 for envelope in envelopes {
                     command_high_water = command_high_water.max(envelope.id);
+                    // Attribution: the worker attests the authenticated
+                    // issuer on the envelope. Absence (pre-identity worker)
+                    // falls back to this process's self-reported env name,
+                    // labeled as exactly that.
+                    let operator = match envelope.operator.as_deref() {
+                        Some(attested) => attested.to_owned(),
+                        None => format!("{} (self-reported)", operator_id()),
+                    };
                     match envelope.command {
                         OperatorCommand::KillSwitch { engage, confirm } => {
                             // A disarming command without explicit
@@ -1750,9 +1758,10 @@ fn main() {
                             if !engage && !confirm {
                                 eprintln!(
                                     "[{}] REFUSED disarm command #{} (no explicit \
-                                     confirmation)",
+                                     confirmation) operator={}",
                                     utc_now(),
-                                    envelope.id
+                                    envelope.id,
+                                    operator
                                 );
                                 continue;
                             }
@@ -1763,7 +1772,7 @@ fn main() {
                                 utc_now(),
                                 engage,
                                 envelope.id,
-                                operator_id()
+                                operator
                             );
                             writer.send(&Frame::Risk {
                                 state: RiskStateWire::snapshot(&risk, &config.mode),
@@ -1772,9 +1781,11 @@ fn main() {
                         }
                         OperatorCommand::SessionEnd => {
                             println!(
-                                "[{}] session-end received (operator command id={})",
+                                "[{}] session-end received (operator command id={}, \
+                                 operator={})",
                                 utc_now(),
-                                envelope.id
+                                envelope.id,
+                                operator
                             );
                             ending = true;
                         }
@@ -1787,18 +1798,20 @@ fn main() {
                             if mode == config.mode {
                                 println!(
                                     "[{}] session-start mode={mode} acknowledged: already \
-                                     running (operator command id={})",
+                                     running (operator command id={}, operator={})",
                                     utc_now(),
-                                    envelope.id
+                                    envelope.id,
+                                    operator
                                 );
                             } else {
                                 eprintln!(
                                     "[{}] refused session-start mode={mode} (process is mode={}): \
                                      restart required to change venue profile (operator command \
-                                     id={})",
+                                     id={}, operator={})",
                                     utc_now(),
                                     config.mode,
-                                    envelope.id
+                                    envelope.id,
+                                    operator
                                 );
                             }
                         }
