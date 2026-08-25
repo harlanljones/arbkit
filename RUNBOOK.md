@@ -53,7 +53,7 @@ fi
 **Start (dry-run rehearsal or paper):**
 
 ```bash
-cargo run -p arbkit-exec --features runner --example prod_trader --release -- \
+cargo run -p arbkit-exec --features runner,paper-replay --example prod_trader --release -- \
     --mode=dry-run \
     --kalshi-markets-url='https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXMLBGAME' \
     --poly-events-url='https://gamma-api.polymarket.com/events?tag_slug=mlb' \
